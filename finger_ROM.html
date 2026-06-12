@@ -114,8 +114,8 @@
                 ctx.fillStyle = "#00FF00";
                 ctx.font = "bold 50px sans-serif"; // フォントサイズを小さく調整
                 ctx.textAlign = "center";
-                ctx.fillText(`MP: ${avgMP}°`, canvas.width/2, canvas.height - 70);
-                ctx.fillText(`PIP: ${avgPIP}°`, canvas.width/2, canvas.height - 20);
+                ctx.fillText(`MP: ${avgMP}°`, canvas.width / 2, canvas.height * 0.82);
+                ctx.fillText(`PIP: ${avgPIP}°`, canvas.width / 2, canvas.height * 0.90);
             } else {
                 dataBuffer = { mp: [], pip: [] };
             }

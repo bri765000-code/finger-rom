@@ -68,9 +68,14 @@
         return Math.round(deg > 180 ? 360 - deg : deg);
     }
 
-    function predict() {
-        if (video.currentTime !== lastVideoTime) {
-            lastVideoTime = video.currentTime;
+    async function predict() {
+    if (video.readyState !== video.HAVE_ENOUGH_DATA) {
+        requestAnimationFrame(predict);
+        return;
+    }
+    
+    if (video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
             const results = handLandmarker.detectForVideo(video, performance.now());
             
             ctx.clearRect(0, 0, canvas.width, canvas.height);

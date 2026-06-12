@@ -110,12 +110,15 @@
                     ctx.fill();
                 });
 
-                // 数値を画面下部（ボタンの上）に表示
+           // 数値をボタンの上（画面下から200px地点）に表示
                 ctx.fillStyle = "#00FF00";
-                ctx.font = "bold 50px sans-serif"; // フォントサイズを小さく調整
+                ctx.font = "bold 50px sans-serif";
                 ctx.textAlign = "center";
-                ctx.fillText(`MP: ${avgMP}°`, canvas.width / 2, canvas.height * 0.82);
-                ctx.fillText(`PIP: ${avgPIP}°`, canvas.width / 2, canvas.height * 0.90);
+                
+                // canvas.height から逆算して配置
+                const yBase = canvas.height - 200;
+                ctx.fillText(`MP: ${avgMP}°`, canvas.width / 2, yBase);
+                ctx.fillText(`PIP: ${avgPIP}°`, canvas.width / 2, yBase + 60);
             } else {
                 dataBuffer = { mp: [], pip: [] };
             }

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <title>手指可動域測定ツール</title>
+    <style>
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
+        #canvas-wrapper { position: relative; width: 100vw; height: 100vh; }
+        canvas { width: 100%; height: 100%; object-fit: cover; }
+        .btn-panel { position: absolute; bottom: 120px; left: 0; right: 0; display: flex; justify-content: center; gap: 20px; z-index: 10; }
+        .hand-btn { padding: 10px 30px; font-size: 1.2rem; border: none; border-radius: 50px; cursor: pointer; background: #444; color: white; transition: 0.3s; }
+        .hand-btn.active { background: #007bff; }
+    </style>
+</head>
+<body>
+
+<div class="btn-panel">
+    <button id="rightBtn" class="hand-btn active">右手</button>
+    <button id="leftBtn" class="hand-btn">左手</button>
+</div>
+
+<div id="canvas-wrapper">
+    <video id="webcam" autoplay playsinline style="display:none;"></video>
+    <canvas id="output_canvas"></canvas>
+</div>
+
+<script type="module">
+    import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js";
+
+    const video = document.getElementById("webcam");
+    const canvas = document.getElementById("output_canvas");
+    const ctx = canvas.getContext("2d");
+    const rightBtn = document.getElementById("rightBtn");
+    const leftBtn = document.getElementById("leftBtn");
+
+    let handLandmarker;
+    let selectedHand = "Right";
+    let dataBuffer = { mp: [], pip: [] };
+    let lastVideoTime = -1;
+
+    function updateButtons() {
+        rightBtn.className = "hand-btn" + (selectedHand === "Right" ? " active" : "");
+        leftBtn.className = "hand-btn" + (selectedHand === "Left" ? " active" : "");
+        dataBuffer = { mp: [], pip: [] };
+    }
+
+    rightBtn.onclick = () => { selectedHand = "Right"; updateButtons(); };
+    leftBtn.onclick = () => { selectedHand = "Left"; updateButtons(); };
+
+    async function init() {
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm");
+        handLandmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" },
+            runningMode: "VIDEO", numHands: 1
+        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            predict();
+        };
+    }
+
+    function calculateAngle(a, b, c) {
+        const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+        let deg = Math.abs(rad * 180 / Math.PI);
+        return Math.round(deg > 180 ? 360 - deg : deg);
+    }
+
+    function predict() {
+        if (video.currentTime !== lastVideoTime) {
+            lastVideoTime = video.currentTime;
+            const results = handLandmarker.detectForVideo(video, performance.now());
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+            ctx.restore();
+
+            if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
+                const lm = results.landmarks[0];
+                
+                dataBuffer.mp.push(calculateAngle(lm[0], lm[5], lm[6]));
+                dataBuffer.pip.push(calculateAngle(lm[5], lm[6], lm[7]));
+                if (dataBuffer.mp.length > 150) { dataBuffer.mp.shift(); dataBuffer.pip.shift(); }
+
+                const avgMP = Math.round(dataBuffer.mp.reduce((a, b) => a + b, 0) / dataBuffer.mp.length);
+                const avgPIP = Math.round(dataBuffer.pip.reduce((a, b) => a + b, 0) / dataBuffer.pip.length);
+
+                ctx.beginPath();
+                ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
+                const pts = [lm[0], lm[5], lm[6], lm[7]]; 
+                ctx.moveTo(canvas.width - pts[0].x * canvas.width, pts[0].y * canvas.height);
+                pts.forEach(p => ctx.lineTo(canvas.width - p.x * canvas.width, p.y * canvas.height));
+                ctx.stroke();
+
+                ctx.fillStyle = "#FF0000";
+                pts.forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(canvas.width - p.x * canvas.width, p.y * canvas.height, 10, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+
+                // 数値を画面下部（ボタンの上）に表示
+                ctx.fillStyle = "#00FF00";
+                ctx.font = "bold 50px sans-serif"; // フォントサイズを小さく調整
+                ctx.textAlign = "center";
+                ctx.fillText(`MP: ${avgMP}°`, canvas.width/2, canvas.height - 70);
+                ctx.fillText(`PIP: ${avgPIP}°`, canvas.width/2, canvas.height - 20);
+            } else {
+                dataBuffer = { mp: [], pip: [] };
+            }
+        }
+        requestAnimationFrame(predict);
+    }
+
+    init();
+</script>
+</body>
+</html>

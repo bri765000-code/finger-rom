@@ -14,7 +14,7 @@
             position: absolute; bottom: 0; left: 0; right: 0; 
             display: flex; justify-content: center; gap: 20px; z-index: 10; 
             background: rgba(0,0,0,0.8);
-            padding: 20px 0 40px 0; /* iPadのホームバー対策のパディング */
+            padding: 20px 0 40px 0;
         }
         .hand-btn { 
             padding: 15px 40px; font-size: 1.2rem; font-weight: bold;
@@ -53,7 +53,7 @@
     function updateButtons() {
         rightBtn.className = "hand-btn" + (selectedHand === "Right" ? " active" : "");
         leftBtn.className = "hand-btn" + (selectedHand === "Left" ? " active" : "");
-        dataBuffer = { mp: [], pip: [] }; // 手の切り替え時にリセット
+        dataBuffer = { mp: [], pip: [] };
     }
 
     rightBtn.onclick = () => { selectedHand = "Right"; updateButtons(); };
@@ -94,7 +94,6 @@
             if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
                 const lm = results.landmarks[0];
                 
-                // 5秒間平均用データ蓄積
                 dataBuffer.mp.push(calculateAngle(lm[0], lm[5], lm[6]));
                 dataBuffer.pip.push(calculateAngle(lm[5], lm[6], lm[7]));
                 if (dataBuffer.mp.length > 150) { dataBuffer.mp.shift(); dataBuffer.pip.shift(); }
@@ -117,20 +116,17 @@
                     ctx.fill();
                 });
 
-                // 数値をボタンエリアの直上に表示
-                const buttonAreaHeight = 150; 
-                const yBase = canvas.height - buttonAreaHeight - 40;
-                
+                // 数値を画面上部に表示
                 ctx.fillStyle = "#00FF00";
                 ctx.font = "bold 50px sans-serif";
                 ctx.textAlign = "center";
-                ctx.fillText(`MP: ${avgMP}°`, canvas.width / 2, yBase);
-                ctx.fillText(`PIP: ${avgPIP}°`, canvas.width / 2, yBase + 60);
+                ctx.fillText(`MP: ${avgMP}°`, canvas.width / 2, 80);
+                ctx.fillText(`PIP: ${avgPIP}°`, canvas.width / 2, 140);
             } else {
-                dataBuffer = { mp: [], pip: [] }; // 手が外れたらリセット
+                dataBuffer = { mp: [], pip: [] };
             }
         }
-        setTimeout(() => requestAnimationFrame(predict), 33); // iOS向けに30fps程度に調整
+        setTimeout(() => requestAnimationFrame(predict), 33);
     }
 
     init();

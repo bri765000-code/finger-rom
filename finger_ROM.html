@@ -2,13 +2,25 @@
 <html lang="ja">
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>手指可動域測定ツール</title>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
         #canvas-wrapper { position: relative; width: 100vw; height: 100vh; }
         canvas { width: 100%; height: 100%; object-fit: cover; }
-        .btn-panel { position: absolute; bottom: 120px; left: 0; right: 0; display: flex; justify-content: center; gap: 20px; z-index: 10; }
-        .hand-btn { padding: 10px 30px; font-size: 1.2rem; border: none; border-radius: 50px; cursor: pointer; background: #444; color: white; transition: 0.3s; }
+        
+        /* ボタンパネルを最下部に固定 */
+        .btn-panel { 
+            position: absolute; bottom: 0; left: 0; right: 0; 
+            display: flex; justify-content: center; gap: 20px; z-index: 10; 
+            background: rgba(0,0,0,0.8);
+            padding: 20px 0 40px 0; /* iPadのホームバー対策のパディング */
+        }
+        .hand-btn { 
+            padding: 15px 40px; font-size: 1.2rem; font-weight: bold;
+            border: none; border-radius: 50px; cursor: pointer;
+            background: #444; color: white; transition: 0.3s;
+        }
         .hand-btn.active { background: #007bff; }
     </style>
 </head>
@@ -41,7 +53,7 @@
     function updateButtons() {
         rightBtn.className = "hand-btn" + (selectedHand === "Right" ? " active" : "");
         leftBtn.className = "hand-btn" + (selectedHand === "Left" ? " active" : "");
-        dataBuffer = { mp: [], pip: [] };
+        dataBuffer = { mp: [], pip: [] }; // 手の切り替え時にリセット
     }
 
     rightBtn.onclick = () => { selectedHand = "Right"; updateButtons(); };
@@ -68,16 +80,9 @@
         return Math.round(deg > 180 ? 360 - deg : deg);
     }
 
-    async function predict() {
-    if (video.readyState !== video.HAVE_ENOUGH_DATA) {
-        setTimeout(() => {
-            requestAnimationFrame(predict);
-            }, 33);
-        return;
-    }
-    
-    if (video.currentTime !== lastVideoTime) {
-        lastVideoTime = video.currentTime;
+    function predict() {
+        if (video.currentTime !== lastVideoTime) {
+            lastVideoTime = video.currentTime;
             const results = handLandmarker.detectForVideo(video, performance.now());
             
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -89,6 +94,7 @@
             if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
                 const lm = results.landmarks[0];
                 
+                // 5秒間平均用データ蓄積
                 dataBuffer.mp.push(calculateAngle(lm[0], lm[5], lm[6]));
                 dataBuffer.pip.push(calculateAngle(lm[5], lm[6], lm[7]));
                 if (dataBuffer.mp.length > 150) { dataBuffer.mp.shift(); dataBuffer.pip.shift(); }
@@ -96,6 +102,7 @@
                 const avgMP = Math.round(dataBuffer.mp.reduce((a, b) => a + b, 0) / dataBuffer.mp.length);
                 const avgPIP = Math.round(dataBuffer.pip.reduce((a, b) => a + b, 0) / dataBuffer.pip.length);
 
+                // 骨格描画
                 ctx.beginPath();
                 ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
                 const pts = [lm[0], lm[5], lm[6], lm[7]]; 
@@ -110,20 +117,20 @@
                     ctx.fill();
                 });
 
-           // 数値をボタンの上（画面下から200px地点）に表示
+                // 数値をボタンエリアの直上に表示
+                const buttonAreaHeight = 150; 
+                const yBase = canvas.height - buttonAreaHeight - 40;
+                
                 ctx.fillStyle = "#00FF00";
                 ctx.font = "bold 50px sans-serif";
                 ctx.textAlign = "center";
-                
-                // canvas.height から逆算して配置
-                const yBase = canvas.height - 200;
                 ctx.fillText(`MP: ${avgMP}°`, canvas.width / 2, yBase);
                 ctx.fillText(`PIP: ${avgPIP}°`, canvas.width / 2, yBase + 60);
             } else {
-                dataBuffer = { mp: [], pip: [] };
+                dataBuffer = { mp: [], pip: [] }; // 手が外れたらリセット
             }
         }
-        requestAnimationFrame(predict);
+        setTimeout(() => requestAnimationFrame(predict), 33); // iOS向けに30fps程度に調整
     }
 
     init();

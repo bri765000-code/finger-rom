@@ -70,7 +70,9 @@
 
     async function predict() {
     if (video.readyState !== video.HAVE_ENOUGH_DATA) {
-        requestAnimationFrame(predict);
+        setTimeout(() => {
+            requestAnimationFrame(predict);
+            }, 33);
         return;
     }
     

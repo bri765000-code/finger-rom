@@ -116,19 +116,21 @@
 
             // 四角背景の描画
             ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-            if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 150, 30, 300, 130); }
-            else { ctx.fillRect(canvas.width/2 - 200, 30, 400, 200); }
+            if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 180, 30, 360, 130); }
+            else { ctx.fillRect(canvas.width/2 - 220, 30, 440, 240); }
 
             // 文字描画
-            ctx.fillStyle = status === "MEASURING" ? "#FF0000" : "#00FF00";
             ctx.textAlign = "center";
             if (status === "MEASURING") {
+                ctx.fillStyle = "#FFFFFF";
                 ctx.font = "50px sans-serif"; ctx.fillText("計測中...", canvas.width/2, 80);
                 ctx.font = "30px sans-serif"; ctx.fillText(`MP:${smoothMP}° PIP:${smoothPIP}°`, canvas.width/2, 130);
             } else {
+                ctx.fillStyle = "#00FF00";
                 ctx.font = "50px sans-serif"; ctx.fillText("計測完了", canvas.width/2, 80);
-                ctx.font = "80px sans-serif"; ctx.fillText(`MP:${finalAngles.mp}°`, canvas.width/2, 180);
-                ctx.fillText(`PIP:${finalAngles.pip}°`, canvas.width/2, 260);
+                ctx.font = "bold 70px sans-serif";
+                ctx.fillText(`MP: ${finalAngles.mp}°`, canvas.width/2, 180);
+                ctx.fillText(`PIP: ${finalAngles.pip}°`, canvas.width/2, 250);
             }
         } else { resetMeasure(); }
         setTimeout(() => requestAnimationFrame(predict), 33);

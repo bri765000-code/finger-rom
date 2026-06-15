@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>手指可動域測定ツール (安定検知版)</title>
+    <title>手指可動域測定ツール</title>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
         #canvas-wrapper { position: relative; width: 100vw; height: 100vh; }
@@ -36,16 +36,12 @@
 <script type="module">
     import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js";
 
-    // --- カルマンフィルタ ---
     class KalmanFilter {
-        constructor(processNoise = 0.05, measurementNoise = 1.0) {
-            this.q = processNoise; this.r = measurementNoise;
-            this.x = 0; this.p = 1;
-        }
-        update(measurement) {
+        constructor(q = 0.1, r = 2.0) { this.q = q; this.r = r; this.x = 0; this.p = 1; }
+        update(m) {
             this.p = this.p + this.q;
             let k = this.p / (this.p + this.r);
-            this.x = this.x + k * (measurement - this.x);
+            this.x = this.x + k * (m - this.x);
             this.p = (1 - k) * this.p;
             return Math.round(this.x);
         }
@@ -54,30 +50,15 @@
     const video = document.getElementById("webcam");
     const canvas = document.getElementById("output_canvas");
     const ctx = canvas.getContext("2d");
-    const rightBtn = document.getElementById("rightBtn");
-    const leftBtn = document.getElementById("leftBtn");
+    const mpFilter = new KalmanFilter(), pipFilter = new KalmanFilter();
 
-    let handLandmarker;
-    let selectedHand = "Right";
-    let lastVideoTime = -1;
+    let handLandmarker, selectedHand = "Right";
+    let status = "MEASURING", stableStartTime = null, finalAngles = { mp: 0, pip: 0 };
+    let lastAngle = { mp: 0, pip: 0 }, resetTime = null;
 
-    // フィルタと状態管理
-    const mpFilter = new KalmanFilter(0.1, 2.0);
-    const pipFilter = new KalmanFilter(0.1, 2.0);
-    let status = "MEASURING"; 
-    let stableStartTime = null;
-    let finalAngles = { mp: 0, pip: 0 };
-    let lastAngle = { mp: 0, pip: 0 };
-
-    function updateButtons() {
-        rightBtn.className = "hand-btn" + (selectedHand === "Right" ? " active" : "");
-        leftBtn.className = "hand-btn" + (selectedHand === "Left" ? " active" : "");
-        status = "MEASURING";
-        stableStartTime = null;
-    }
-
-    rightBtn.onclick = () => { selectedHand = "Right"; updateButtons(); };
-    leftBtn.onclick = () => { selectedHand = "Left"; updateButtons(); };
+    document.getElementById("rightBtn").onclick = () => { selectedHand = "Right"; resetMeasure(); };
+    document.getElementById("leftBtn").onclick = () => { selectedHand = "Left"; resetMeasure(); };
+    function resetMeasure() { status = "MEASURING"; stableStartTime = null; }
 
     async function init() {
         const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm");
@@ -87,11 +68,7 @@
         });
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         video.srcObject = stream;
-        video.onloadedmetadata = () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            predict();
-        };
+        video.onloadedmetadata = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; predict(); };
     }
 
     function calculateAngle(a, b, c) {
@@ -101,70 +78,61 @@
     }
 
     function predict() {
-        if (video.currentTime !== lastVideoTime) {
-            lastVideoTime = video.currentTime;
-            const results = handLandmarker.detectForVideo(video, performance.now());
-            
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.save();
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
-            ctx.restore();
+        const results = handLandmarker.detectForVideo(video, performance.now());
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.save(); ctx.scale(-1, 1);
+        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+        ctx.restore();
 
-            if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
-                const lm = results.landmarks[0];
-                const rawMP = calculateAngle(lm[0], lm[5], lm[6]);
-                const rawPIP = calculateAngle(lm[5], lm[6], lm[7]);
-                const smoothMP = mpFilter.update(rawMP);
-                const smoothPIP = pipFilter.update(rawPIP);
+        if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
+            const lm = results.landmarks[0];
+            const smoothMP = mpFilter.update(calculateAngle(lm[0], lm[5], lm[6]));
+            const smoothPIP = pipFilter.update(calculateAngle(lm[5], lm[6], lm[7]));
 
-                // 静止検知
-                const delta = Math.abs(smoothMP - lastAngle.mp) + Math.abs(smoothPIP - lastAngle.pip);
-                if (status === "MEASURING") {
-                    if (delta < 2.0) {
-                        if (!stableStartTime) stableStartTime = Date.now();
-                        if (Date.now() - stableStartTime > 3000) {
-                            status = "STABLE";
-                            finalAngles = { mp: smoothMP, pip: smoothPIP };
-                        }
-                    } else {
-                        stableStartTime = null;
+            if (status === "MEASURING") {
+                if (Math.abs(smoothMP - lastAngle.mp) + Math.abs(smoothPIP - lastAngle.pip) < 2.0) {
+                    if (!stableStartTime) stableStartTime = Date.now();
+                    if (Date.now() - stableStartTime > 3000) {
+                        status = "STABLE"; finalAngles = { mp: smoothMP, pip: smoothPIP };
+                        resetTime = Date.now();
                     }
-                }
-                lastAngle = { mp: smoothMP, pip: smoothPIP };
+                } else { stableStartTime = null; }
+            } else if (Date.now() - resetTime > 5000) { resetMeasure(); }
+            lastAngle = { mp: smoothMP, pip: smoothPIP };
 
-                // UI描画
-                ctx.fillStyle = status === "MEASURING" ? "#FFFF00" : "#00FF00";
-                ctx.textAlign = "center";
-                
-                if (status === "MEASURING") {
-                    ctx.font = "bold 50px sans-serif";
-                    ctx.fillText("計測中...", canvas.width / 2, 80);
-                    ctx.font = "30px sans-serif";
-                    ctx.fillText(`MP: ${smoothMP}° / PIP: ${smoothPIP}°`, canvas.width / 2, 140);
-                } else {
-                    ctx.font = "bold 50px sans-serif";
-                    ctx.fillText("計測完了", canvas.width / 2, 80);
-                    ctx.font = "bold 80px sans-serif";
-                    ctx.fillText(`MP: ${finalAngles.mp}°`, canvas.width / 2, 180);
-                    ctx.fillText(`PIP: ${finalAngles.pip}°`, canvas.width / 2, 270);
-                }
+            // 骨格描画
+            ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
+            ctx.beginPath();
+            const pts = [lm[0], lm[5], lm[6], lm[7]];
+            ctx.moveTo(canvas.width - pts[0].x * canvas.width, pts[0].y * canvas.height);
+            for(let i=1; i<pts.length; i++) ctx.lineTo(canvas.width - pts[i].x * canvas.width, pts[i].y * canvas.height);
+            ctx.stroke();
 
-                // 骨格描画
-                ctx.beginPath();
-                ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
-                const pts = [lm[0], lm[5], lm[6], lm[7]]; 
-                ctx.moveTo(canvas.width - pts[0].x * canvas.width, pts[0].y * canvas.height);
-                pts.forEach(p => ctx.lineTo(canvas.width - p.x * canvas.width, p.y * canvas.height));
-                ctx.stroke();
+            ctx.fillStyle = "#FF0000";
+            pts.forEach(p => {
+                ctx.beginPath(); ctx.arc(canvas.width - p.x * canvas.width, p.y * canvas.height, 8, 0, Math.PI*2); ctx.fill();
+            });
+
+            // 四角背景の描画
+            ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+            if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 150, 30, 300, 130); }
+            else { ctx.fillRect(canvas.width/2 - 200, 30, 400, 200); }
+
+            // 文字描画
+            ctx.fillStyle = status === "MEASURING" ? "#FF0000" : "#00FF00";
+            ctx.textAlign = "center";
+            if (status === "MEASURING") {
+                ctx.font = "50px sans-serif"; ctx.fillText("計測中...", canvas.width/2, 80);
+                ctx.font = "30px sans-serif"; ctx.fillText(`MP:${smoothMP}° PIP:${smoothPIP}°`, canvas.width/2, 130);
             } else {
-                status = "MEASURING";
-                stableStartTime = null;
+                ctx.font = "50px sans-serif"; ctx.fillText("計測完了", canvas.width/2, 80);
+                ctx.font = "80px sans-serif"; ctx.fillText(`MP:${finalAngles.mp}°`, canvas.width/2, 180);
+                ctx.fillText(`PIP:${finalAngles.pip}°`, canvas.width/2, 260);
             }
-        }
+        } else { resetMeasure(); }
         setTimeout(() => requestAnimationFrame(predict), 33);
     }
-
     init();
 </script>
 </body>

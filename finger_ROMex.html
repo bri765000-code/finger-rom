@@ -1,43 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>手指可動域測定ツール (傾き補正版)</title>
+    <style>
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
+        #canvas-wrapper { position: relative; width: 100vw; height: 100vh; }
+        canvas { width: 100%; height: 100%; object-fit: cover; }
+        .btn-panel { 
+            position: absolute; bottom: 0; left: 0; right: 0; 
+            display: flex; justify-content: center; gap: 20px; z-index: 10; 
+            background: rgba(0,0,0,0.8); padding: 20px 0 40px 0; 
+        }
+        .hand-btn { 
+            padding: 15px 40px; font-size: 1.2rem; font-weight: bold;
+            border: none; border-radius: 50px; cursor: pointer;
+            background: #444; color: white; transition: 0.3s;
+        }
+        .hand-btn.active { background: #007bff; }
+    </style>
+</head>
+<body>
+
+<div class="btn-panel">
+    <button id="rightBtn" class="hand-btn active">右手</button>
+    <button id="leftBtn" class="hand-btn">左手</button>
+</div>
+
+<div id="canvas-wrapper">
+    <video id="webcam" autoplay playsinline style="display:none;"></video>
+    <canvas id="output_canvas"></canvas>
+</div>
+
 <script type="module">
-    // ...（中略）...
-    
+    import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.js";
+
+    // カルマンフィルタ
+    class KalmanFilter {
+        constructor(q = 0.1, r = 2.0) { this.q = q; this.r = r; this.x = 0; this.p = 1; }
+        update(m) {
+            this.p = this.p + this.q;
+            let k = this.p / (this.p + this.r);
+            this.x = this.x + k * (m - this.x);
+            this.p = (1 - k) * this.p;
+            return Math.round(this.x);
+        }
+    }
+
+    const video = document.getElementById("webcam");
+    const canvas = document.getElementById("output_canvas");
+    const ctx = canvas.getContext("2d");
+    const mpFilter = new KalmanFilter(), pipFilter = new KalmanFilter();
+
+    let handLandmarker, selectedHand = "Right";
+    let status = "MEASURING", stableStartTime = null, finalAngles = { mp: 0, pip: 0 };
+    let lastAngle = { mp: 0, pip: 0 }, resetTime = null;
     let devicePitch = 0; // iPadの傾き（度）
 
-    // iPadの傾きをリアルタイム取得
-    if (window.DeviceOrientationEvent) {
-        window.addEventListener("deviceorientation", (event) => {
-            // betaはデバイスの前後の傾き（-180~180度）
-            devicePitch = event.beta;
+    // センサー許可リクエストと傾き取得
+    async function requestSensorPermission() {
+        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+            const response = await DeviceOrientationEvent.requestPermission();
+            if (response === 'granted') {
+                window.addEventListener("deviceorientation", (event) => { devicePitch = event.beta; });
+            }
+        } else {
+            window.addEventListener("deviceorientation", (event) => { devicePitch = event.beta; });
+        }
+    }
+
+    document.getElementById("rightBtn").onclick = () => { selectedHand = "Right"; requestSensorPermission(); resetMeasure(); };
+    document.getElementById("leftBtn").onclick = () => { selectedHand = "Left"; requestSensorPermission(); resetMeasure(); };
+    function resetMeasure() { status = "MEASURING"; stableStartTime = null; }
+
+    async function init() {
+        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm");
+        handLandmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" },
+            runningMode: "VIDEO", numHands: 1
         });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; predict(); };
+    }
+
+    function calculateAngle(a, b, c) {
+        const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+        let deg = Math.abs(rad * 180 / Math.PI);
+        return Math.round(deg > 180 ? 360 - deg : deg);
     }
 
     function predict() {
-        // ...（前略：MediaPipe解析処理）...
+        const results = handLandmarker.detectForVideo(video, performance.now());
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.save(); ctx.scale(-1, 1);
+        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+        ctx.restore();
 
-            if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
-                const lm = results.landmarks[0];
-                
-                // 【傾き補正】デバイスが垂直(90度)からズレている分を差し引く
-                // iPadが倒れている（pitchが大きい）と指の角度に影響するため補正
-                const tiltOffset = Math.abs(devicePitch) > 90 ? (Math.abs(devicePitch) - 90) : 0;
-                
-                const rawMP = calculateAngle(lm[0], lm[5], lm[6]);
-                const rawPIP = calculateAngle(lm[5], lm[6], lm[7]);
-                
-                // 補正後の値として算出（単純に傾きを引く）
-                const smoothMP = mpFilter.update(rawMP - tiltOffset);
-                const smoothPIP = pipFilter.update(rawPIP - tiltOffset);
+        // iPadの傾き補正量（垂直90度からのズレを算出）
+        const tiltOffset = Math.abs(devicePitch) > 90 ? (Math.abs(devicePitch) - 90) : 0;
 
-                // ...（中略：計測状態管理）...
+        if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
+            const lm = results.landmarks[0];
+            
+            // 角度算出時に傾き分を差し引く
+            const smoothMP = mpFilter.update(calculateAngle(lm[0], lm[5], lm[6]) - tiltOffset);
+            const smoothPIP = pipFilter.update(calculateAngle(lm[5], lm[6], lm[7]) - tiltOffset);
 
-                // 警告UI: 傾きが大きすぎる場合（10度以上のズレ）
-                if (Math.abs(devicePitch) < 80 || Math.abs(devicePitch) > 100) {
-                    ctx.fillStyle = "rgba(255, 0, 0, 0.8)";
-                    ctx.font = "bold 30px sans-serif";
-                    ctx.fillText("警告: iPadの角度を垂直にしてください", canvas.width/2, 400);
-                }
+            if (status === "MEASURING") {
+                if (Math.abs(smoothMP - lastAngle.mp) + Math.abs(smoothPIP - lastAngle.pip) < 2.0) {
+                    if (!stableStartTime) stableStartTime = Date.now();
+                    if (Date.now() - stableStartTime > 3000) {
+                        status = "STABLE"; finalAngles = { mp: smoothMP, pip: smoothPIP };
+                        resetTime = Date.now();
+                    }
+                } else { stableStartTime = null; }
+            } else if (Date.now() - resetTime > 5000) { resetMeasure(); }
+            lastAngle = { mp: smoothMP, pip: smoothPIP };
 
-                // ...（後略：描画処理）...
+            // 骨格描画
+            ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
+            ctx.beginPath();
+            const pts = [lm[0], lm[5], lm[6], lm[7]];
+            ctx.moveTo(canvas.width - pts[0].x * canvas.width, pts[0].y * canvas.height);
+            for(let i=1; i<pts.length; i++) ctx.lineTo(canvas.width - pts[i].x * canvas.width, pts[i].y * canvas.height);
+            ctx.stroke();
+
+            ctx.fillStyle = "#FF0000";
+            pts.forEach(p => {
+                ctx.beginPath(); ctx.arc(canvas.width - p.x * canvas.width, p.y * canvas.height, 8, 0, Math.PI*2); ctx.fill();
+            });
+
+            // 警告UI（iPadが大きく傾いている場合）
+            if (Math.abs(devicePitch) < 80 || Math.abs(devicePitch) > 100) {
+                ctx.fillStyle = "rgba(255, 0, 0, 0.7)";
+                ctx.fillRect(canvas.width/2 - 200, 400, 400, 60);
+                ctx.fillStyle = "#FFF";
+                ctx.font = "bold 25px sans-serif";
+                ctx.fillText("警告：iPadを垂直にしてください", canvas.width/2, 440);
+            }
+
+            // 四角背景の描画
+            ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+            if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 180, 30, 360, 130); }
+            else { ctx.fillRect(canvas.width/2 - 220, 30, 440, 240); }
+
+            // 文字描画
+            ctx.textAlign = "center";
+            if (status === "MEASURING") {
+                ctx.fillStyle = "#FFFFFF";
+                ctx.font = "50px sans-serif"; ctx.fillText("計測中...", canvas.width/2, 80);
+                ctx.font = "30px sans-serif"; ctx.fillText(`MP:${smoothMP}° PIP:${smoothPIP}°`, canvas.width/2, 130);
+            } else {
+                ctx.fillStyle = "#00FF00";
+                ctx.font = "50px sans-serif"; ctx.fillText("計測完了", canvas.width/2, 80);
+                ctx.font = "bold 70px sans-serif";
+                ctx.fillText(`MP: ${finalAngles.mp}°`, canvas.width/2, 180);
+                ctx.fillText(`PIP: ${finalAngles.pip}°`, canvas.width/2, 250);
+            }
+        } else { resetMeasure(); }
+        setTimeout(() => requestAnimationFrame(predict), 33);
     }
-    // ...（後略）...
+    init();
 </script>
+</body>
+</html>

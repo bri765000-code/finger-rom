@@ -1,0 +1,43 @@
+<script type="module">
+    // ...（中略）...
+    
+    let devicePitch = 0; // iPadの傾き（度）
+
+    // iPadの傾きをリアルタイム取得
+    if (window.DeviceOrientationEvent) {
+        window.addEventListener("deviceorientation", (event) => {
+            // betaはデバイスの前後の傾き（-180~180度）
+            devicePitch = event.beta;
+        });
+    }
+
+    function predict() {
+        // ...（前略：MediaPipe解析処理）...
+
+            if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
+                const lm = results.landmarks[0];
+                
+                // 【傾き補正】デバイスが垂直(90度)からズレている分を差し引く
+                // iPadが倒れている（pitchが大きい）と指の角度に影響するため補正
+                const tiltOffset = Math.abs(devicePitch) > 90 ? (Math.abs(devicePitch) - 90) : 0;
+                
+                const rawMP = calculateAngle(lm[0], lm[5], lm[6]);
+                const rawPIP = calculateAngle(lm[5], lm[6], lm[7]);
+                
+                // 補正後の値として算出（単純に傾きを引く）
+                const smoothMP = mpFilter.update(rawMP - tiltOffset);
+                const smoothPIP = pipFilter.update(rawPIP - tiltOffset);
+
+                // ...（中略：計測状態管理）...
+
+                // 警告UI: 傾きが大きすぎる場合（10度以上のズレ）
+                if (Math.abs(devicePitch) < 80 || Math.abs(devicePitch) > 100) {
+                    ctx.fillStyle = "rgba(255, 0, 0, 0.8)";
+                    ctx.font = "bold 30px sans-serif";
+                    ctx.fillText("警告: iPadの角度を垂直にしてください", canvas.width/2, 400);
+                }
+
+                // ...（後略：描画処理）...
+    }
+    // ...（後略）...
+</script>

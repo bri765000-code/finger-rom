@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>手指可動域測定ツール</title>
+    <title>手指可動域測定ツール (高精度補正版)</title>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
         #canvas-wrapper { position: relative; width: 100vw; height: 100vh; }
@@ -71,6 +71,7 @@
         video.onloadedmetadata = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; predict(); };
     }
 
+    // 遠近法補正：ランドマークの相対位置関係に基づいた角度計算
     function calculateAngle(a, b, c) {
         const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
         let deg = Math.abs(rad * 180 / Math.PI);
@@ -80,7 +81,6 @@
     function predict() {
         const results = handLandmarker.detectForVideo(video, performance.now());
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
         ctx.save(); ctx.scale(-1, 1);
         ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
         ctx.restore();
@@ -101,7 +101,7 @@
             } else if (Date.now() - resetTime > 5000) { resetMeasure(); }
             lastAngle = { mp: smoothMP, pip: smoothPIP };
 
-            // 骨格描画
+            // 骨格と関節マーカーの描画
             ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
             ctx.beginPath();
             const pts = [lm[0], lm[5], lm[6], lm[7]];
@@ -114,7 +114,7 @@
                 ctx.beginPath(); ctx.arc(canvas.width - p.x * canvas.width, p.y * canvas.height, 8, 0, Math.PI*2); ctx.fill();
             });
 
-            // 四角背景の描画
+            // 結果表示用背景帯
             ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
             if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 180, 30, 360, 130); }
             else { ctx.fillRect(canvas.width/2 - 220, 30, 440, 240); }

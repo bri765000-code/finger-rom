@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>手指可動域測定ツール</title>
+    <title>手指可動域測定ツール (ROM補正版)</title>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
         #canvas-wrapper { position: relative; width: 100vw; height: 100vh; }
@@ -61,10 +61,19 @@
         video.onloadedmetadata = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; predict(); };
     }
 
+    // --- 修正後の角度計算ロジック（伸展0度からの屈曲角） ---
     function calculateAngle(a, b, c) {
-        const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-        let deg = Math.abs(rad * 180 / Math.PI);
-        return Math.round(deg > 180 ? 360 - deg : deg);
+        const vectBA = { x: a.x - b.x, y: a.y - b.y };
+        const vectBC = { x: c.x - b.x, y: c.y - b.y };
+        const dotProduct = vectBA.x * vectBC.x + vectBA.y * vectBC.y;
+        const magBA = Math.sqrt(vectBA.x * vectBA.x + vectBA.y * vectBA.y);
+        const magBC = Math.sqrt(vectBC.x * vectBC.x + vectBC.y * vectBC.y);
+        const cosTheta = dotProduct / (magBA * magBC);
+        const safeCosTheta = Math.min(Math.max(cosTheta, -1), 1);
+        let rad = Math.acos(safeCosTheta);
+        let deg = rad * 180 / Math.PI;
+        // 伸展方向への誤差は0度とする
+        return Math.max(0, Math.round(180 - deg));
     }
 
     function predict() {
@@ -77,7 +86,7 @@
         if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
             const lm = results.landmarks[0];
             const pixelDist = Math.hypot((lm[0].x - lm[5].x) * canvas.width, (lm[0].y - lm[5].y) * canvas.height);
-            const estimatedDist = Math.round(9600 / pixelDist); 
+            const estimatedDist = Math.round(1200 / pixelDist); 
             const isOptimal = estimatedDist >= 30 && estimatedDist <= 50;
             const distColor = isOptimal ? "#00FF00" : "#FFCC00";
 
@@ -95,7 +104,6 @@
             } else if (Date.now() - resetTime > 5000) { resetMeasure(); }
             lastAngle = { mp: smoothMP, pip: smoothPIP };
 
-            // 骨格描画
             ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
             ctx.beginPath();
             const pts = [lm[0], lm[5], lm[6], lm[7]];
@@ -103,7 +111,6 @@
             for(let i=1; i<pts.length; i++) ctx.lineTo(canvas.width - pts[i].x * canvas.width, pts[i].y * canvas.height);
             ctx.stroke();
 
-            // 背景と文字
             ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
             if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 180, 30, 360, 170); }
             else { ctx.fillRect(canvas.width/2 - 220, 30, 440, 280); }

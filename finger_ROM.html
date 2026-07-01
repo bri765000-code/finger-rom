@@ -76,22 +76,10 @@
 
         if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
             const lm = results.landmarks[0];
-            
-            // ピクセル距離による推定
             const pixelDist = Math.hypot((lm[0].x - lm[5].x) * canvas.width, (lm[0].y - lm[5].y) * canvas.height);
             const estimatedDist = Math.round(1200 / pixelDist); 
             const isOptimal = estimatedDist >= 30 && estimatedDist <= 50;
             const distColor = isOptimal ? "#00FF00" : "#FFCC00";
-
-            // 右側に縦書き表示
-            ctx.save();
-            ctx.translate(canvas.width - 40, canvas.height / 2);
-            ctx.rotate(-Math.PI / 2);
-            ctx.fillStyle = distColor;
-            ctx.font = "bold 30px sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText(`距離: ${estimatedDist} cm`, 0, 0);
-            ctx.restore();
 
             const smoothMP = mpFilter.update(calculateAngle(lm[0], lm[5], lm[6]));
             const smoothPIP = pipFilter.update(calculateAngle(lm[5], lm[6], lm[7]));
@@ -107,6 +95,7 @@
             } else if (Date.now() - resetTime > 5000) { resetMeasure(); }
             lastAngle = { mp: smoothMP, pip: smoothPIP };
 
+            // 骨格描画
             ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
             ctx.beginPath();
             const pts = [lm[0], lm[5], lm[6], lm[7]];
@@ -114,19 +103,26 @@
             for(let i=1; i<pts.length; i++) ctx.lineTo(canvas.width - pts[i].x * canvas.width, pts[i].y * canvas.height);
             ctx.stroke();
 
+            // 背景と文字
             ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-            if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 180, 30, 360, 130); }
-            else { ctx.fillRect(canvas.width/2 - 220, 30, 440, 240); }
+            if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 180, 30, 360, 170); }
+            else { ctx.fillRect(canvas.width/2 - 220, 30, 440, 280); }
 
+            ctx.textAlign = "center";
             ctx.fillStyle = status === "MEASURING" ? "#FFFFFF" : "#00FF00";
             ctx.font = status === "MEASURING" ? "50px sans-serif" : "bold 70px sans-serif";
-            ctx.textAlign = "center";
             ctx.fillText(status === "MEASURING" ? "計測中..." : "計測完了", canvas.width/2, 80);
+            
+            ctx.font = "30px sans-serif";
             if (status === "MEASURING") {
-                ctx.font = "30px sans-serif"; ctx.fillText(`MP:${smoothMP}° PIP:${smoothPIP}°`, canvas.width/2, 130);
+                ctx.fillText(`MP:${smoothMP}° PIP:${smoothPIP}°`, canvas.width/2, 130);
+                ctx.fillStyle = distColor;
+                ctx.fillText(`${estimatedDist} cm`, canvas.width/2, 170);
             } else {
                 ctx.fillText(`MP: ${finalAngles.mp}°`, canvas.width/2, 180);
                 ctx.fillText(`PIP: ${finalAngles.pip}°`, canvas.width/2, 250);
+                ctx.fillStyle = distColor;
+                ctx.fillText(`${estimatedDist} cm`, canvas.width/2, 290);
             }
         } else { resetMeasure(); }
         setTimeout(() => requestAnimationFrame(predict), 33);

@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>手指可動域測定ツール (距離ガイド付き)</title>
+    <title>手指可動域測定ツール (距離数値表示版)</title>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
         #canvas-wrapper { position: relative; width: 100vw; height: 100vh; }
@@ -14,12 +14,10 @@
     </style>
 </head>
 <body>
-
 <div class="btn-panel">
     <button id="rightBtn" class="hand-btn active">右手</button>
     <button id="leftBtn" class="hand-btn">左手</button>
 </div>
-
 <div id="canvas-wrapper">
     <video id="webcam" autoplay playsinline style="display:none;"></video>
     <canvas id="output_canvas"></canvas>
@@ -79,11 +77,10 @@
         if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
             const lm = results.landmarks[0];
             
-            // 距離ガイドの判定（z値は環境により微調整が必要）
-            const zDist = Math.abs(lm[0].z);
-            let distanceMsg = "距離：適正", distColor = "#00FF00";
-            if (zDist > 0.15) { distanceMsg = "もっと近づけてください"; distColor = "#FFCC00"; }
-            else if (zDist < 0.05) { distanceMsg = "離してください"; distColor = "#FF0000"; }
+            // 距離の数値化
+            const estimatedDist = Math.round(Math.abs(lm[0].z) * 400); 
+            const isOptimal = estimatedDist >= 30 && estimatedDist <= 50;
+            const distColor = isOptimal ? "#00FF00" : "#FFCC00";
 
             const smoothMP = mpFilter.update(calculateAngle(lm[0], lm[5], lm[6]));
             const smoothPIP = pipFilter.update(calculateAngle(lm[5], lm[6], lm[7]));
@@ -99,12 +96,13 @@
             } else if (Date.now() - resetTime > 5000) { resetMeasure(); }
             lastAngle = { mp: smoothMP, pip: smoothPIP };
 
-            // 描画処理
+            // 距離表示
             ctx.fillStyle = distColor;
-            ctx.font = "bold 25px sans-serif";
+            ctx.font = "bold 30px sans-serif";
             ctx.textAlign = "center";
-            ctx.fillText(distanceMsg, canvas.width/2, 350);
+            ctx.fillText(`カメラからの距離: ${estimatedDist} cm`, canvas.width / 2, canvas.height - 150);
 
+            // 骨格・UI描画
             ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
             ctx.beginPath();
             const pts = [lm[0], lm[5], lm[6], lm[7]];
@@ -116,15 +114,12 @@
             if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 180, 30, 360, 130); }
             else { ctx.fillRect(canvas.width/2 - 220, 30, 440, 240); }
 
-            ctx.textAlign = "center";
+            ctx.fillStyle = status === "MEASURING" ? "#FFFFFF" : "#00FF00";
+            ctx.font = status === "MEASURING" ? "50px sans-serif" : "bold 70px sans-serif";
+            ctx.fillText(status === "MEASURING" ? "計測中..." : "計測完了", canvas.width/2, 80);
             if (status === "MEASURING") {
-                ctx.fillStyle = "#FFFFFF";
-                ctx.font = "50px sans-serif"; ctx.fillText("計測中...", canvas.width/2, 80);
                 ctx.font = "30px sans-serif"; ctx.fillText(`MP:${smoothMP}° PIP:${smoothPIP}°`, canvas.width/2, 130);
             } else {
-                ctx.fillStyle = "#00FF00";
-                ctx.font = "50px sans-serif"; ctx.fillText("計測完了", canvas.width/2, 80);
-                ctx.font = "bold 70px sans-serif";
                 ctx.fillText(`MP: ${finalAngles.mp}°`, canvas.width/2, 180);
                 ctx.fillText(`PIP: ${finalAngles.pip}°`, canvas.width/2, 250);
             }

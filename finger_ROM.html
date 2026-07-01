@@ -77,7 +77,7 @@
         if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
             const lm = results.landmarks[0];
             const pixelDist = Math.hypot((lm[0].x - lm[5].x) * canvas.width, (lm[0].y - lm[5].y) * canvas.height);
-            const estimatedDist = Math.round(1200 / pixelDist); 
+            const estimatedDist = Math.round(150 / pixelDist); 
             const isOptimal = estimatedDist >= 30 && estimatedDist <= 50;
             const distColor = isOptimal ? "#00FF00" : "#FFCC00";
 

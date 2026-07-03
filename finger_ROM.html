@@ -3,13 +3,21 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>手指可動域測定ツール (ROM補正版)</title>
+    <title>手指可動域測定ツール (縦画面対応版)</title>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; overflow: hidden; }
         #canvas-wrapper { position: relative; width: 100vw; height: 100vh; }
         canvas { width: 100%; height: 100%; object-fit: cover; }
-        .btn-panel { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: center; gap: 20px; z-index: 10; background: rgba(0,0,0,0.8); padding: 20px 0 40px 0; }
-        .hand-btn { padding: 15px 40px; font-size: 1.2rem; font-weight: bold; border: none; border-radius: 50px; cursor: pointer; background: #444; color: white; transition: 0.3s; }
+        .btn-panel { 
+            position: absolute; bottom: 0; left: 0; right: 0; 
+            display: flex; justify-content: center; gap: 30px; z-index: 10; 
+            background: rgba(0,0,0,0.7); padding: 30px 0 50px 0; 
+        }
+        .hand-btn { 
+            padding: 20px 50px; font-size: 1.5rem; font-weight: bold;
+            border: none; border-radius: 50px; cursor: pointer;
+            background: #444; color: white; transition: 0.3s;
+        }
         .hand-btn.active { background: #007bff; }
     </style>
 </head>
@@ -61,7 +69,6 @@
         video.onloadedmetadata = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; predict(); };
     }
 
-    // --- 修正後の角度計算ロジック（伸展0度からの屈曲角） ---
     function calculateAngle(a, b, c) {
         const vectBA = { x: a.x - b.x, y: a.y - b.y };
         const vectBC = { x: c.x - b.x, y: c.y - b.y };
@@ -70,24 +77,26 @@
         const magBC = Math.sqrt(vectBC.x * vectBC.x + vectBC.y * vectBC.y);
         const cosTheta = dotProduct / (magBA * magBC);
         const safeCosTheta = Math.min(Math.max(cosTheta, -1), 1);
-        let rad = Math.acos(safeCosTheta);
-        let deg = rad * 180 / Math.PI;
-        // 伸展方向への誤差は0度とする
+        let deg = Math.acos(safeCosTheta) * 180 / Math.PI;
         return Math.max(0, Math.round(180 - deg));
     }
 
     function predict() {
         const results = handLandmarker.detectForVideo(video, performance.now());
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.save(); ctx.scale(-1, 1);
-        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+        
+        // 縦画面での鏡像表示を調整
+        ctx.save();
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         ctx.restore();
 
         if (results.landmarks && results.landmarks.length > 0 && results.handednesses[0][0].displayName === selectedHand) {
             const lm = results.landmarks[0];
             const pixelDist = Math.hypot((lm[0].x - lm[5].x) * canvas.width, (lm[0].y - lm[5].y) * canvas.height);
-            const estimatedDist = Math.round(7680 / pixelDist); 
-            const isOptimal = estimatedDist >= 30 && estimatedDist <= 50;
+            const estimatedDist = Math.round(1200 / pixelDist); 
+            const isOptimal = estimatedDist >= 25 && estimatedDist <= 55;
             const distColor = isOptimal ? "#00FF00" : "#FFCC00";
 
             const smoothMP = mpFilter.update(calculateAngle(lm[0], lm[5], lm[6]));
@@ -104,32 +113,31 @@
             } else if (Date.now() - resetTime > 5000) { resetMeasure(); }
             lastAngle = { mp: smoothMP, pip: smoothPIP };
 
-            ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 6;
+            // 骨格描画（鏡像対応）
+            ctx.strokeStyle = "#00FF00"; ctx.lineWidth = 8;
             ctx.beginPath();
             const pts = [lm[0], lm[5], lm[6], lm[7]];
             ctx.moveTo(canvas.width - pts[0].x * canvas.width, pts[0].y * canvas.height);
             for(let i=1; i<pts.length; i++) ctx.lineTo(canvas.width - pts[i].x * canvas.width, pts[i].y * canvas.height);
             ctx.stroke();
 
-            ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-            if (status === "MEASURING") { ctx.fillRect(canvas.width/2 - 180, 30, 360, 170); }
-            else { ctx.fillRect(canvas.width/2 - 220, 30, 440, 280); }
+            // UI描画（上部に配置）
+            ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+            ctx.fillRect(canvas.width/2 - 200, 50, 400, 250);
 
             ctx.textAlign = "center";
             ctx.fillStyle = status === "MEASURING" ? "#FFFFFF" : "#00FF00";
-            ctx.font = status === "MEASURING" ? "50px sans-serif" : "bold 70px sans-serif";
-            ctx.fillText(status === "MEASURING" ? "計測中..." : "計測完了", canvas.width/2, 80);
+            ctx.font = status === "MEASURING" ? "40px sans-serif" : "bold 60px sans-serif";
+            ctx.fillText(status === "MEASURING" ? "計測中..." : "計測完了", canvas.width/2, 120);
             
             ctx.font = "30px sans-serif";
             if (status === "MEASURING") {
-                ctx.fillText(`MP:${smoothMP}° PIP:${smoothPIP}°`, canvas.width/2, 130);
+                ctx.fillText(`MP:${smoothMP}° PIP:${smoothPIP}°`, canvas.width/2, 180);
                 ctx.fillStyle = distColor;
-                ctx.fillText(`${estimatedDist} cm`, canvas.width/2, 170);
+                ctx.fillText(`距離: ${estimatedDist} cm`, canvas.width/2, 250);
             } else {
-                ctx.fillText(`MP: ${finalAngles.mp}°`, canvas.width/2, 180);
+                ctx.fillText(`MP: ${finalAngles.mp}°`, canvas.width/2, 200);
                 ctx.fillText(`PIP: ${finalAngles.pip}°`, canvas.width/2, 250);
-                ctx.fillStyle = distColor;
-                ctx.fillText(`${estimatedDist} cm`, canvas.width/2, 290);
             }
         } else { resetMeasure(); }
         setTimeout(() => requestAnimationFrame(predict), 33);

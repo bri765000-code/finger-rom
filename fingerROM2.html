@@ -2,30 +2,26 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>示指 ROM 測定 (iPad Pro 高精度版)</title>
+    <title>示指 ROM 測定 (ROM準拠版)</title>
     <style>
         body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
         #container { position: relative; width: 100vw; height: 100vh; }
         video, canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         video { filter: brightness(0.6); }
-        #angle-display { position: absolute; top: 20px; width: 100%; text-align: center; font-size: 28px; z-index: 10; text-shadow: 2px 2px 4px #000; }
+        #angle-display { position: absolute; top: 20px; width: 100%; text-align: center; font-size: 28px; z-index: 10; }
         #progress-container { position: absolute; top: 80px; left: 10%; width: 80%; height: 12px; background: #333; border-radius: 6px; z-index: 10; overflow: hidden; }
-        #progress-bar { width: 0%; height: 100%; background: #00ff00; transition: width 0.05s; }
-        #result-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00ff00; font-size: 90px; font-weight: bold; text-shadow: 0 0 30px rgba(0,255,0,0.6); z-index: 20; display: none; }
-        #controls { position: absolute; bottom: 40px; width: 100%; text-align: center; z-index: 30; }
-        button { padding: 20px 40px; font-size: 20px; cursor: pointer; border-radius: 12px; border: none; background: #444; color: white; }
+        #progress-bar { width: 0%; height: 100%; background: #00ff00; }
+        #result-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00ff00; font-size: 80px; font-weight: bold; z-index: 20; display: none; }
     </style>
 </head>
 <body>
-
-<div id="angle-display">MP: --° | PIP: --°</div>
+<div id="angle-display">MP: 0° | PIP: 0°</div>
 <div id="progress-container"><div id="progress-bar"></div></div>
 <div id="result-display"></div>
 <div id="container">
     <video id="input_video" autoplay playsinline></video>
     <canvas id="output_canvas"></canvas>
 </div>
-<div id="controls"><button onclick="resetMeasurement()">リセット測定</button></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
@@ -36,17 +32,19 @@
         update(m) { this.p += this.q; let k = this.p / (this.p + this.r); this.x += k * (m - this.x); this.p = (1 - k) * this.p; return this.x; }
     }
 
-    const filterMP = new KalmanFilter(0.05, 1.0); // 追従性を高める
+    const filterMP = new KalmanFilter(0.05, 1.0);
     const filterPIP = new KalmanFilter(0.05, 1.0);
     let steadyTime = 0, isSteady = false, lastMP = 0, lastPIP = 0;
 
-    function resetMeasurement() { steadyTime = 0; isSteady = false; document.getElementById('result-display').style.display = 'none'; document.getElementById('progress-bar').style.width = '0%'; }
-
-    // 高精度な角度計算（ラジアンから度数法への変換を最適化）
-    function getDeg(a, b, c) {
-        const angle = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-        let deg = Math.abs(angle * 180 / Math.PI);
-        return deg > 180 ? 360 - deg : deg;
+    // 医学的ROM算出ロジック
+    function getJointAngle(p1, p2, p3) {
+        const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
+        const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
+        const dotProduct = v1.x * v2.x + v1.y * v2.y;
+        const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
+        const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
+        let angleDeg = Math.acos(Math.max(-1, Math.min(1, dotProduct / (mag1 * mag2)))) * 180 / Math.PI;
+        return Math.max(0, 180 - angleDeg);
     }
 
     const video = document.getElementById('input_video');
@@ -54,33 +52,22 @@
     const ctx = canvas.getContext('2d');
 
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    
-    // iPad Pro用に設定を強化
-    hands.setOptions({ 
-        maxNumHands: 1, 
-        modelComplexity: 1, // 最高精度
-        minDetectionConfidence: 0.7, // 検出の厳格化
-        minTrackingConfidence: 0.7 
-    });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
 
     hands.onResults((results) => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             const l = results.multiHandLandmarks[0];
-            
-            // 指がしっかり映っているか信頼度をチェック (0.7以上の確信度のみ反映)
-            const smMP = filterMP.update(getDeg(l[0], l[5], l[6]));
-            const smPIP = filterPIP.update(getDeg(l[5], l[6], l[7]));
+            // MP関節: 手首(0), MCP(5), PIP(6)
+            const smMP = filterMP.update(getJointAngle(l[0], l[5], l[6]));
+            // PIP関節: MCP(5), PIP(6), DIP(7)
+            const smPIP = filterPIP.update(getJointAngle(l[5], l[6], l[7]));
 
             if (!isSteady) {
-                if (Math.abs(smMP - lastMP) < 3 && Math.abs(smPIP - lastPIP) < 3) {
-                    steadyTime += 16;
-                } else {
-                    steadyTime = 0;
-                }
+                if (Math.abs(smMP - lastMP) < 2 && Math.abs(smPIP - lastPIP) < 2) steadyTime += 16;
+                else steadyTime = 0;
                 document.getElementById('progress-bar').style.width = Math.min(steadyTime / 3000 * 100, 100) + '%';
                 if (steadyTime >= 3000) {
                     isSteady = true;
@@ -88,12 +75,10 @@
                     document.getElementById('result-display').style.display = 'block';
                 }
             }
-
             document.getElementById('angle-display').innerText = `MP: ${smMP.toFixed(0)}° | PIP: ${smPIP.toFixed(0)}°`;
             lastMP = smMP; lastPIP = smPIP;
 
-            // 高精細描画
-            ctx.strokeStyle = '#00ff00'; ctx.lineWidth = 10; ctx.lineCap = 'round';
+            ctx.strokeStyle = '#00ff00'; ctx.lineWidth = 10;
             ctx.beginPath();
             ctx.moveTo(l[0].x * canvas.width, l[0].y * canvas.height);
             ctx.lineTo(l[5].x * canvas.width, l[5].y * canvas.height);
@@ -103,7 +88,6 @@
         }
     });
 
-    // 解像度を上げてiPad ProのRetinaディスプレイに対応
     new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 1280, height: 720 }).start();
 </script>
 </body>

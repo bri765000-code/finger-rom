@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>示指 ROM 測定システム (MP軸修正版)</title>
+    <title>示指 ROM 測定システム (角度反転修正版)</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; }
         #container { position: relative; width: 100vw; height: 100vh; }
@@ -30,7 +30,7 @@
 </head>
 <body>
 
-<div id="angle-display">MP: --° | PIP: --°</div>
+<div id="angle-display">MP: 0° | PIP: 0°</div>
 <div id="progress-container"><div id="progress-bar"></div></div>
 <div id="result-display"></div>
 <div id="mode-display">右手測定モード</div>
@@ -85,6 +85,13 @@
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
     hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5 });
     
+    // 角度計算用（屈曲角として計算）
+    const getDeg = (a, b, c) => {
+        const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+        let deg = Math.abs(rad * 180 / Math.PI);
+        return deg > 180 ? 360 - deg : deg;
+    };
+
     hands.onResults((results) => {
         canvasElement.width = videoElement.videoWidth;
         canvasElement.height = videoElement.videoHeight;
@@ -96,15 +103,7 @@
                 const handedness = (results.multiHandedness[i].label === 'Right') ? 'Left' : 'Right';
                 
                 if (handedness === targetHand && l[0] && l[5] && l[6] && l[7]) {
-                    const getDeg = (a, b, c) => {
-                        const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-                        let deg = Math.abs(rad * 180 / Math.PI);
-                        return deg > 180 ? 360 - deg : deg;
-                    };
-
-                    // MP関節: 手首(0) - MCP(5) - PIP(6)
                     const smMP = filterMP.update(getDeg(l[0], l[5], l[6]));
-                    // PIP関節: MCP(5) - PIP(6) - DIP(7)
                     const smPIP = filterPIP.update(getDeg(l[5], l[6], l[7]));
 
                     if (!isSteady) {
@@ -124,7 +123,6 @@
                     document.getElementById('angle-display').innerText = `MP: ${smMP.toFixed(0)}° | PIP: ${smPIP.toFixed(0)}°`;
                     lastMP = smMP; lastPIP = smPIP;
                     
-                    // 描画: 軸を明確に表示
                     drawConnectors(canvasCtx, [l[0], l[5], l[6]], [[0,1],[1,2]], {color:'#00ff00', lineWidth:6});
                     drawConnectors(canvasCtx, [l[5], l[6], l[7]], [[0,1],[1,2]], {color:'#00ff00', lineWidth:6});
                     drawLandmarks(canvasCtx, [l[0], l[5], l[6], l[7]], {color:'#ff0000', lineWidth:2});

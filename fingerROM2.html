@@ -2,144 +2,81 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>示指 ROM 測定システム (高安定化版)</title>
+    <title>示指 ROM 測定 (超安定版)</title>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; }
+        body { margin: 0; background: #000; overflow: hidden; }
         #container { position: relative; width: 100vw; height: 100vh; }
         video, canvas { 
             position: absolute; width: 100%; height: 100%; object-fit: cover; 
-            transform: scaleX(-1); 
+            transform: scaleX(-1); /* 鏡像表示 */
         }
-        video { filter: brightness(0.6); }
-        
-        #angle-display {
-            position: absolute; top: 20px; width: 100%; text-align: center;
-            color: #fff; font-size: 24px; z-index: 30; pointer-events: none;
-        }
-        #progress-container {
-            position: absolute; top: 70px; left: 10%; width: 80%; height: 10px;
-            background: #444; border-radius: 5px; z-index: 30; overflow: hidden;
-        }
-        #progress-bar { width: 0%; height: 100%; background: #00ff00; transition: width 0.1s; }
-        #result-display {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #00ff00; font-size: 70px; font-weight: bold; text-align: center;
-            text-shadow: 0 0 20px rgba(0,255,0,0.5); z-index: 40; display: none;
-        }
-        #mode-display { position: absolute; top: 100px; right: 20px; background: rgba(0,0,0,0.7); color: #00ff00; padding: 10px 20px; border-radius: 8px; z-index: 30; }
-        #controls { position: absolute; bottom: 30px; width: 100%; text-align: center; z-index: 30; }
-        button { padding: 15px 30px; font-size: 18px; cursor: pointer; border-radius: 8px; margin: 0 5px; }
+        #angle-display { position: absolute; top: 20px; width: 100%; text-align: center; color: #fff; font-size: 30px; z-index: 10; pointer-events: none; }
     </style>
 </head>
 <body>
 
-<div id="angle-display">MP: 0° | PIP: 0°</div>
-<div id="progress-container"><div id="progress-bar"></div></div>
-<div id="result-display"></div>
-<div id="mode-display">右手測定モード</div>
-
+<div id="angle-display">手をかざしてください</div>
 <div id="container">
     <video id="input_video" autoplay playsinline></video>
     <canvas id="output_canvas"></canvas>
 </div>
 
-<div id="controls">
-    <button onclick="resetMeasurement()">リセット</button>
-    <button onclick="setHand('Right')">右手</button>
-    <button onclick="setHand('Left')">左手</button>
-</div>
-
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
-    class KalmanFilter {
-        constructor(q, r) { this.q = q; this.r = r; this.x = 0; this.p = 1; }
-        update(m) {
-            this.p = this.p + this.q;
-            let k = this.p / (this.p + this.r);
-            this.x = this.x + k * (m - this.x);
-            this.p = (1 - k) * this.p;
-            return this.x;
-        }
-    }
+    const video = document.getElementById('input_video');
+    const canvas = document.getElementById('output_canvas');
+    const ctx = canvas.getContext('2d');
 
-    const filterMP = new KalmanFilter(0.1, 1.5);
-    const filterPIP = new KalmanFilter(0.1, 1.5);
-    let targetHand = 'Right', steadyTime = 0, isSteady = false, lastMP = 0, lastPIP = 0;
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
 
-    function resetMeasurement() {
-        steadyTime = 0; isSteady = false;
-        document.getElementById('result-display').style.display = 'none';
-        document.getElementById('progress-bar').style.width = '0%';
-    }
+    // 安定性を最優先した設定
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 0, // 軽量モデル
+        minDetectionConfidence: 0.2, // 閾値を低くして検出を優先
+        minTrackingConfidence: 0.2
+    });
 
-    function setHand(hand) {
-        targetHand = hand;
-        resetMeasurement();
-        document.getElementById('mode-display').innerText = (hand === 'Right' ? "右手" : "左手") + "測定モード";
-    }
-
-    // 角度計算：絶対値をとり、0度（伸展）からプラス方向に増える計算
-    function getDeg(a, b, c) {
-        let angle = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-        angle = Math.abs(angle * 180 / Math.PI);
-        return angle > 180 ? 360 - angle : angle;
-    }
-
-    const videoElement = document.getElementById('input_video');
-    const canvasElement = document.getElementById('output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
-
-    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    // 信頼度を0.3に緩和し、検出を維持しやすくする
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.3, minTrackingConfidence: 0.5 });
-    
     hands.onResults((results) => {
-        canvasElement.width = videoElement.videoWidth;
-        canvasElement.height = videoElement.videoHeight;
-        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        
-        if (results.multiHandLandmarks && results.multiHandedness) {
-            for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-                const l = results.multiHandLandmarks[i];
-                const handedness = results.multiHandedness[i].label; 
-                
-                if (handedness === targetHand) {
-                    const smMP = filterMP.update(getDeg(l[0], l[5], l[6]));
-                    const smPIP = filterPIP.update(getDeg(l[5], l[6], l[7]));
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-                    if (!isSteady) {
-                        if (Math.abs(smMP - lastMP) < 5 && Math.abs(smPIP - lastPIP) < 5) {
-                            steadyTime += 20;
-                        } else {
-                            steadyTime = 0;
-                        }
-                        document.getElementById('progress-bar').style.width = Math.min(steadyTime / 3000 * 100, 100) + '%';
-                        if (steadyTime >= 3000) {
-                            isSteady = true;
-                            document.getElementById('result-display').innerHTML = `MP: ${smMP.toFixed(0)}°<br>PIP: ${smPIP.toFixed(0)}°`;
-                            document.getElementById('result-display').style.display = 'block';
-                        }
-                    }
-                    document.getElementById('angle-display').innerText = `MP: ${smMP.toFixed(0)}° | PIP: ${smPIP.toFixed(0)}°`;
-                    lastMP = smMP; lastPIP = smPIP;
-                    
-                    // 描画：ランドマークが存在する場合のみ描画
-                    drawConnectors(canvasCtx, [l[0], l[5], l[6]], [[0,1],[1,2]], {color:'#00ff00', lineWidth:6});
-                    drawConnectors(canvasCtx, [l[5], l[6], l[7]], [[0,1],[1,2]], {color:'#00ff00', lineWidth:6});
-                    drawLandmarks(canvasCtx, [l[0], l[5], l[6], l[7]], {color:'#ff0000', lineWidth:2});
-                }
-            }
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const l = results.multiHandLandmarks[0]; // 常に最初の手を追跡
+            
+            // 角度計算 (MP:0-5-6, PIP:5-6-7)
+            const getDeg = (a, b, c) => {
+                let rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+                let deg = Math.abs(rad * 180 / Math.PI);
+                return deg > 180 ? 360 - deg : deg;
+            };
+
+            const mp = getDeg(l[0], l[5], l[6]);
+            const pip = getDeg(l[5], l[6], l[7]);
+            document.getElementById('angle-display').innerText = `MP: ${mp.toFixed(0)}° | PIP: ${pip.toFixed(0)}°`;
+
+            // 簡易描画
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 10;
+            ctx.beginPath();
+            ctx.moveTo(l[0].x * canvas.width, l[0].y * canvas.height);
+            ctx.lineTo(l[5].x * canvas.width, l[5].y * canvas.height);
+            ctx.lineTo(l[6].x * canvas.width, l[6].y * canvas.height);
+            ctx.lineTo(l[7].x * canvas.width, l[7].y * canvas.height);
+            ctx.stroke();
         }
     });
 
-    // 負荷軽減のためCameraインスタンスの設定を最適化
-    new Camera(videoElement, {
-        onFrame: async () => { await hands.send({image: videoElement}); },
-        width: 640, height: 480 // 解像度を下げて処理を軽くする
-    }).start();
+    const camera = new Camera(video, {
+        onFrame: async () => { await hands.send({image: video}); },
+        width: 640, height: 480
+    });
+    camera.start();
 </script>
 </body>
 </html>

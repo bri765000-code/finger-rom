@@ -2,58 +2,40 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>示指 ROM 測定 (QR読み取り対応版)</title>
+    <title>示指 ROM 測定 (安定版)</title>
+    <!-- ライブラリ読み込み -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-    <!-- QRコード読み取り用ライブラリ -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <style>
-        /* CSSは以前のものを流用してOKです */
-        #overlay { position: absolute; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 50; display: none; }
-        #scanner-canvas { display: none; }
+        body { margin: 0; background: #000; color: #fff; }
     </style>
 </head>
 <body>
-    <!-- (UI部分は以前のコードと同様) -->
-    <div id="overlay">
-        <video id="scanner-video" style="width:100%;" autoplay playsinline></video>
-        <button onclick="closeOverlay()">キャンセル</button>
-    </div>
+    <!-- 最小限のUI -->
+    <div id="status" style="position:fixed; top:0; z-index:100;">読み込み中...</div>
+    <video id="input_video" autoplay playsinline style="width:100%;"></video>
 
-<script>
-    async function startScanner() {
-        document.getElementById('overlay').style.display = 'block';
-        const video = document.getElementById('scanner-video');
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
-        video.srcObject = stream;
-        video.play();
-        requestAnimationFrame(scanQRCode);
-    }
-
-    function scanQRCode() {
-        const video = document.getElementById('scanner-video');
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-        if (code) {
-            // QRコードが見つかった！
-            const peerId = code.data;
-            alert("接続IDを検出しました: " + peerId);
-            conn = peer.connect(peerId);
-            setupConn();
-            closeOverlay();
-        } else {
-            requestAnimationFrame(scanQRCode); // まだ見つからない場合は繰り返す
+    <script>
+        // カメラ準備完了まで待機させる関数
+        async function initApp() {
+            try {
+                const video = document.getElementById('input_video');
+                // カメラ起動
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                document.getElementById('status').innerText = "カメラ起動完了";
+                
+                // ここでようやくMediaPipe等の初期化を行う
+                console.log("初期化成功");
+            } catch (e) {
+                document.getElementById('status').innerText = "エラー: " + e.message;
+            }
         }
-    }
-    
-    // 他の関数（setupConn, getJointAngle等は以前のコードと同じ）
-</script>
+        
+        window.addEventListener('DOMContentLoaded', initApp);
+    </script>
 </body>
 </html>

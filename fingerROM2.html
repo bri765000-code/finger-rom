@@ -2,28 +2,43 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>示指 ROM 測定 (端末連携版)</title>
-    <!-- PeerJSライブラリの読み込み -->
+    <title>示指 ROM 測定 (QR連携版)</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
     <style>
-        body { margin: 0; background: #000; color: white; text-align: center; font-family: sans-serif; }
-        #peer-info { padding: 10px; background: #222; }
-        #video-container { position: relative; width: 100%; height: 60vh; }
-        #input_video, #output_canvas { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        #angle-display { font-size: 32px; font-weight: bold; margin: 10px; }
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; pointer-events: none; }
+        #conn-status { padding: 10px; font-size: 16px; background: rgba(0,0,0,0.7); }
+        #qr-container { margin: 10px auto; background: white; width: 150px; padding: 5px; }
+        #angle-display { font-size: 28px; font-weight: bold; text-align: center; margin-top: 10px; }
+        #progress-container { margin: 10px auto; width: 80%; height: 10px; background: #333; border-radius: 5px; overflow: hidden; }
+        #progress-bar { width: 0%; height: 100%; background: #00ff00; transition: width 0.1s; }
+        #result-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00ff00; font-size: 80px; font-weight: bold; display: none; }
+        #controls { position: absolute; bottom: 30px; width: 100%; text-align: center; pointer-events: auto; }
+        button { padding: 12px 20px; margin: 5px; border-radius: 8px; border: none; cursor: pointer; }
+        #container { position: relative; width: 100vw; height: 100vh; }
+        video, canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
     </style>
 </head>
 <body>
 
-<div id="peer-info">
-    <div>接続ID: <span id="my-id">生成中...</span></div>
-    <input id="target-id" placeholder="接続先IDを入力">
-    <button onclick="connectToPeer()">接続</button>
+<div id="ui-layer">
+    <div id="conn-status">
+        <div id="status-text">待機中... QRを読み取るかIDを入力してください</div>
+        <div id="qr-container"><canvas id="qr-canvas"></canvas></div>
+        <div>ID: <span id="my-id">生成中...</span></div>
+    </div>
+    <div id="angle-display">MP: 0° | PIP: 0°</div>
+    <div id="progress-container"><div id="progress-bar"></div></div>
+    <div id="result-display"></div>
+    <div id="controls">
+        <input id="target-id" placeholder="相手のIDを入力" style="padding:10px;">
+        <button onclick="connectToPeer()">接続</button>
+        <button onclick="resetMeasurement()">リセット</button>
+    </div>
 </div>
 
-<div id="angle-display">MP: --° | PIP: --°</div>
-
-<div id="video-container">
+<div id="container">
     <video id="input_video" autoplay playsinline></video>
     <canvas id="output_canvas"></canvas>
 </div>
@@ -32,62 +47,64 @@
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 
 <script>
-    // --- 通信ロジック ---
-    const peer = new Peer(); 
-    let conn;
-    let remoteData = { mp: 0, pip: 0, conf: 0 };
+    const peer = new Peer();
+    let conn, remoteData = { mp: 0, pip: 0 };
+    let steadyTime = 0, isSteady = false, lastIntegrated = { mp: 0, pip: 0 };
 
-    peer.on('open', (id) => { document.getElementById('my-id').innerText = id; });
+    peer.on('open', id => {
+        document.getElementById('my-id').innerText = id;
+        QRCode.toCanvas(document.getElementById('qr-canvas'), id);
+    });
+
+    peer.on('connection', c => { conn = c; setupConn(); });
 
     function connectToPeer() {
-        const id = document.getElementById('target-id').value;
-        conn = peer.connect(id);
-        setupConnection();
+        conn = peer.connect(document.getElementById('target-id').value);
+        setupConn();
     }
 
-    peer.on('connection', (c) => {
-        conn = c;
-        setupConnection();
-    });
-
-    function setupConnection() {
-        conn.on('data', (data) => { remoteData = data; });
+    function setupConn() {
+        document.getElementById('status-text').innerText = "ステータス: 接続完了";
+        conn.on('data', data => remoteData = data);
     }
 
-    // --- 計測ロジック ---
-    const video = document.getElementById('input_video');
-    const canvas = document.getElementById('output_canvas');
-    const ctx = canvas.getContext('2d');
-    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
-
-    hands.onResults((results) => {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            const l = results.multiHandLandmarks[0];
-            const myMP = getJointAngle(l[0], l[5], l[6]);
-            const myPIP = getJointAngle(l[5], l[6], l[7]);
-            
-            // 自分のデータを送信
-            if (conn && conn.open) conn.send({ mp: myMP, pip: myPIP, conf: 1 });
-
-            // 統合表示（自分の値と相手の値を平均）
-            const finalMP = (myMP + remoteData.mp) / 2;
-            const finalPIP = (myPIP + remoteData.pip) / 2;
-            document.getElementById('angle-display').innerText = `MP: ${finalMP.toFixed(0)}° | PIP: ${finalPIP.toFixed(0)}°`;
-        }
-    });
-
+    function resetMeasurement() { steadyTime = 0; isSteady = false; document.getElementById('result-display').style.display = 'none'; }
     function getJointAngle(p1, p2, p3) {
-        const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
-        const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
-        const dot = v1.x * v2.x + v1.y * v2.y;
-        const mag = Math.sqrt(v1.x**2 + v1.y**2) * Math.sqrt(v2.x**2 + v2.y**2);
+        const v1 = { x: p1.x - p2.x, y: p1.y - p2.y }, v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
+        const dot = v1.x * v2.x + v1.y * v2.y, mag = Math.sqrt(v1.x**2 + v1.y**2) * Math.sqrt(v2.x**2 + v2.y**2);
         return Math.max(0, 180 - Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI);
     }
 
-    new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 640, height: 480 }).start();
+    const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
+
+    hands.onResults(results => {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const l = results.multiHandLandmarks[0];
+            const myMP = getJointAngle(l[0], l[5], l[6]), myPIP = getJointAngle(l[5], l[6], l[7]);
+            if (conn && conn.open) conn.send({ mp: myMP, pip: myPIP });
+
+            const intMP = (myMP + remoteData.mp) / 2, intPIP = (myPIP + remoteData.pip) / 2;
+            
+            if (!isSteady) {
+                if (Math.abs(intMP - lastIntegrated.mp) < 2 && Math.abs(intPIP - lastIntegrated.pip) < 2) steadyTime += 16;
+                else steadyTime = 0;
+                document.getElementById('progress-bar').style.width = Math.min(steadyTime / 3000 * 100, 100) + '%';
+                if (steadyTime >= 3000) {
+                    isSteady = true;
+                    document.getElementById('result-display').innerHTML = `MP: ${intMP.toFixed(0)}°<br>PIP: ${intPIP.toFixed(0)}°`;
+                    document.getElementById('result-display').style.display = 'block';
+                }
+            }
+            document.getElementById('angle-display').innerText = `MP: ${intMP.toFixed(0)}° | PIP: ${intPIP.toFixed(0)}°`;
+            lastIntegrated = { mp: intMP, pip: intPIP };
+        }
+    });
+
+    new Camera(document.getElementById('input_video'), { 
+        onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); }, 
+        width: 1280, height: 720 
+    }).start();
 </script>
 </body>
 </html>

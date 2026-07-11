@@ -2,85 +2,122 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>示指 ROM 測定 (2台カメラ統合版)</title>
+    <title>示指 ROM 測定システム</title>
     <style>
         body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
         #container { position: relative; width: 100vw; height: 100vh; }
-        .video-box { position: absolute; width: 100%; height: 100%; }
-        #v1, #c1 { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-        #v2 { position: absolute; top: 10px; right: 10px; width: 30%; height: 30%; border: 3px solid #00ff00; object-fit: cover; transform: scaleX(-1); }
-        
+        video, canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        video { filter: brightness(0.6); }
+
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; pointer-events: none; }
-        #angle-display { margin-top: 20px; text-align: center; font-size: 32px; font-weight: bold; }
+        #angle-display { margin-top: 20px; text-align: center; font-size: 28px; }
+        #progress-container { margin: 20px auto; width: 80%; height: 12px; background: #333; border-radius: 6px; overflow: hidden; }
+        #progress-bar { width: 0%; height: 100%; background: #00ff00; }
+        
+        #result-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00ff00; font-size: 80px; font-weight: bold; text-shadow: 0 0 20px #000; display: none; }
+        
         #controls { position: absolute; bottom: 30px; width: 100%; text-align: center; pointer-events: auto; }
-        button { padding: 15px 30px; margin: 0 10px; background: #444; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; border-radius: 8px; margin: 0 10px; background: #444; color: white; border: none; }
+        #mode-indicator { position: absolute; top: 120px; width: 100%; text-align: center; color: #ffcc00; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div id="ui-layer">
-    <div id="angle-display">解析中...</div>
+    <div id="angle-display">MP: 0° | PIP: 0°</div>
+    <div id="mode-indicator">現在の設定: 右手測定</div>
+    <div id="progress-container"><div id="progress-bar"></div></div>
+    <div id="result-display"></div>
     <div id="controls">
         <button onclick="resetMeasurement()">リセット</button>
-        <button onclick="startMultiCamera()">2台カメラ接続</button>
+        <button onclick="setHand('Right')">右手モード</button>
+        <button onclick="setHand('Left')">左手モード</button>
     </div>
 </div>
 
 <div id="container">
-    <video id="v1" autoplay playsinline></video>
-    <canvas id="c1"></canvas>
-    <video id="v2" autoplay playsinline style="display:none;"></video>
+    <video id="input_video" autoplay playsinline></video>
+    <canvas id="output_canvas"></canvas>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 
 <script>
-    let s1 = { mp: 0, pip: 0, conf: 0 }, s2 = { mp: 0, pip: 0, conf: 0 };
-    
-    // 信頼度算出：ランドマークの可視性に基づく
-    function calculateReliability(l) { return l ? 1.0 : 0.0; }
+    class KalmanFilter {
+        constructor(q, r) { this.q = q; this.r = r; this.x = 0; this.p = 1; }
+        update(m) { this.p += this.q; let k = this.p / (this.p + this.r); this.x += k * (m - this.x); this.p = (1 - k) * this.p; return this.x; }
+    }
+
+    const filterMP = new KalmanFilter(0.05, 1.0);
+    const filterPIP = new KalmanFilter(0.05, 1.0);
+    let steadyTime = 0, isSteady = false, lastMP = 0, lastPIP = 0;
+    let targetHand = 'Right';
+
+    function resetMeasurement() {
+        steadyTime = 0; isSteady = false;
+        document.getElementById('result-display').style.display = 'none';
+        document.getElementById('progress-bar').style.width = '0%';
+    }
+
+    function setHand(hand) {
+        targetHand = hand;
+        document.getElementById('mode-indicator').innerText = "現在の設定: " + (hand === 'Right' ? "右手" : "左手") + "測定";
+        resetMeasurement();
+    }
 
     function getJointAngle(p1, p2, p3) {
-        const v1 = { x: p1.x - p2.x, y: p1.y - p2.y }, v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
-        const dot = v1.x * v2.x + v1.y * v2.y, mag = Math.sqrt(v1.x**2 + v1.y**2) * Math.sqrt(v2.x**2 + v2.y**2);
-        return Math.max(0, 180 - Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI);
+        const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
+        const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
+        const dotProduct = v1.x * v2.x + v1.y * v2.y;
+        const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
+        const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
+        let angleDeg = Math.acos(Math.max(-1, Math.min(1, dotProduct / (mag1 * mag2)))) * 180 / Math.PI;
+        return Math.max(0, 180 - angleDeg);
     }
+
+    const video = document.getElementById('input_video');
+    const canvas = document.getElementById('output_canvas');
+    const ctx = canvas.getContext('2d');
 
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
 
     hands.onResults((results) => {
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            // 反転映像との兼ね合いで、ラベルが 'Left' なら画面上の右手として扱うなどの調整が必要な場合もありますが
+            // 今回は手動切替優先のためシンプルに実装します
             const l = results.multiHandLandmarks[0];
-            const data = { mp: getJointAngle(l[0], l[5], l[6]), pip: getJointAngle(l[5], l[6], l[7]), conf: 1 };
-            
-            // どちらのカメラの解析結果かを判定 (ここでは簡略化のため一つを更新)
-            s1 = data;
+            const smMP = filterMP.update(getJointAngle(l[0], l[5], l[6]));
+            const smPIP = filterPIP.update(getJointAngle(l[5], l[6], l[7]));
+
+            if (!isSteady) {
+                if (Math.abs(smMP - lastMP) < 2 && Math.abs(smPIP - lastPIP) < 2) steadyTime += 16;
+                else steadyTime = 0;
+                document.getElementById('progress-bar').style.width = Math.min(steadyTime / 3000 * 100, 100) + '%';
+                if (steadyTime >= 3000) {
+                    isSteady = true;
+                    document.getElementById('result-display').innerHTML = `MP: ${smMP.toFixed(0)}°<br>PIP: ${smPIP.toFixed(0)}°`;
+                    document.getElementById('result-display').style.display = 'block';
+                }
+            }
+            document.getElementById('angle-display').innerText = `MP: ${smMP.toFixed(0)}° | PIP: ${smPIP.toFixed(0)}°`;
+            lastMP = smMP; lastPIP = smPIP;
+
+            ctx.strokeStyle = '#00ff00'; ctx.lineWidth = 10;
+            ctx.beginPath();
+            ctx.moveTo(l[0].x * canvas.width, l[0].y * canvas.height);
+            ctx.lineTo(l[5].x * canvas.width, l[5].y * canvas.height);
+            ctx.lineTo(l[6].x * canvas.width, l[6].y * canvas.height);
+            ctx.lineTo(l[7].x * canvas.width, l[7].y * canvas.height);
+            ctx.stroke();
         }
-        
-        // 統合ロジック
-        const totalConf = s1.conf + s2.conf;
-        const intMP = totalConf > 0 ? (s1.mp * s1.conf + s2.mp * s2.conf) / totalConf : s1.mp;
-        const intPIP = totalConf > 0 ? (s1.pip * s1.conf + s2.pip * s2.conf) / totalConf : s1.pip;
-        
-        document.getElementById('angle-display').innerText = `MP: ${intMP.toFixed(0)}° | PIP: ${intPIP.toFixed(0)}°`;
     });
 
-    // カメラ1開始
-    new Camera(document.getElementById('v1'), { 
-        onFrame: async () => { await hands.send({image: document.getElementById('v1')}); }, 
-        width: 1280, height: 720 
-    }).start();
-
-    // 2台目接続処理
-    function startMultiCamera() {
-        document.getElementById('v2').style.display = 'block';
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-            .then(stream => { document.getElementById('v2').srcObject = stream; });
-    }
-
-    function resetMeasurement() { s1 = { mp: 0, pip: 0, conf: 0 }; s2 = { mp: 0, pip: 0, conf: 0 }; }
+    new Camera(video, { onFrame: async () => { await hands.send({image: video}); }, width: 1280, height: 720 }).start();
 </script>
 </body>
 </html>

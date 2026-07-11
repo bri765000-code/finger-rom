@@ -9,38 +9,54 @@
         video { position: absolute; width: 100%; height: 100%; object-fit: cover; filter: brightness(0.6); }
         canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; }
         
+        /* 角度表示（リアルタイム） */
         #angle-display {
             position: absolute; top: 20px; width: 100%; text-align: center;
-            color: #fff; font-size: 32px; font-weight: bold;
-            text-shadow: 2px 2px 4px #000; z-index: 30; pointer-events: none;
+            color: #fff; font-size: 24px; z-index: 30;
         }
-        #mode-display {
-            position: absolute; top: 100px; right: 20px; background: rgba(0,0,0,0.7);
-            color: #00ff00; padding: 10px 20px; border-radius: 8px; font-size: 20px; z-index: 30;
+
+        /* プログレスバー */
+        #progress-container {
+            position: absolute; top: 70px; left: 10%; width: 80%; height: 10px;
+            background: #444; border-radius: 5px; z-index: 30; overflow: hidden;
         }
+        #progress-bar { width: 0%; height: 100%; background: #00ff00; transition: width 0.1s; }
+
+        /* 確定値表示（画面中央） */
+        #result-display {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #00ff00; font-size: 80px; font-weight: bold;
+            text-shadow: 0 0 20px rgba(0,255,0,0.5); z-index: 40; display: none;
+        }
+
+        #mode-display { position: absolute; top: 100px; right: 20px; background: rgba(0,0,0,0.7); color: #00ff00; padding: 10px 20px; border-radius: 8px; z-index: 30; }
         #controls { position: absolute; bottom: 30px; width: 100%; text-align: center; z-index: 30; }
         button { padding: 15px 30px; font-size: 18px; cursor: pointer; border-radius: 8px; }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 </head>
 <body>
 
 <div id="angle-display">MP: --° | PIP: --°</div>
+<div id="progress-container"><div id="progress-bar"></div></div>
+<div id="result-display"></div>
 <div id="mode-display">右手測定モード</div>
+
 <div id="container">
     <video id="input_video" autoplay playsinline></video>
     <canvas id="output_canvas"></canvas>
 </div>
 
 <div id="controls">
-    <button onclick="setHand('Right')">右手測定</button>
-    <button onclick="setHand('Left')">左手測定</button>
+    <button onclick="resetMeasurement()">リセット</button>
+    <button onclick="setHand('Right')">右手</button>
+    <button onclick="setHand('Left')">左手</button>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
 <script>
-    // カルマンフィルタ
     class KalmanFilter {
         constructor(q, r) { this.q = q; this.r = r; this.x = 0; this.p = 1; }
         update(m) {
@@ -54,20 +70,18 @@
 
     const filterMP = new KalmanFilter(0.1, 1.5);
     const filterPIP = new KalmanFilter(0.1, 1.5);
-    
-    let targetHand = 'Right', steadyTime = 0, confirmedMP = "--", confirmedPIP = "--", isSteady = false;
-    let lastMP = 0, lastPIP = 0;
+    let targetHand = 'Right', steadyTime = 0, isSteady = false, lastMP = 0, lastPIP = 0;
+
+    function resetMeasurement() {
+        steadyTime = 0; isSteady = false;
+        document.getElementById('result-display').style.display = 'none';
+        document.getElementById('progress-bar').style.width = '0%';
+    }
 
     function setHand(hand) {
         targetHand = hand;
-        steadyTime = 0; confirmedMP = "--"; confirmedPIP = "--"; isSteady = false;
+        resetMeasurement();
         document.getElementById('mode-display').innerText = (hand === 'Right' ? "右手" : "左手") + "測定モード";
-    }
-
-    function calculateAngle(a, b, c) {
-        const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-        let deg = Math.abs(rad * (180 / Math.PI));
-        return 180 - (deg > 180 ? 360 - deg : deg);
     }
 
     const videoElement = document.getElementById('input_video');
@@ -75,7 +89,7 @@
     const canvasCtx = canvasElement.getContext('2d');
 
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
+    hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7 });
     
     hands.onResults((results) => {
         canvasElement.width = videoElement.videoWidth;
@@ -87,25 +101,29 @@
                 const handedness = (results.multiHandedness[i].label === 'Right') ? 'Left' : 'Right';
                 if (handedness === targetHand) {
                     const l = results.multiHandLandmarks[i];
-                    const smMP = filterMP.update(calculateAngle(l[2], l[5], l[6]));
-                    const smPIP = filterPIP.update(calculateAngle(l[5], l[6], l[7]));
+                    const angleMP = 180 - Math.abs(Math.atan2(l[6].y-l[5].y, l[6].x-l[5].x) - Math.atan2(l[2].y-l[5].y, l[2].x-l[5].x)) * 180 / Math.PI;
+                    const anglePIP = 180 - Math.abs(Math.atan2(l[7].y-l[6].y, l[7].x-l[6].x) - Math.atan2(l[5].y-l[6].y, l[5].x-l[6].x)) * 180 / Math.PI;
+                    
+                    const smMP = filterMP.update(angleMP);
+                    const smPIP = filterPIP.update(anglePIP);
 
-                    // 静止判定 (±5度以内の揺らぎを許容)
-                    if (Math.abs(smMP - lastMP) < 5 && Math.abs(smPIP - lastPIP) < 5) {
-                        steadyTime += 16; 
-                    } else {
-                        steadyTime = 0; isSteady = false;
+                    if (!isSteady) {
+                        if (Math.abs(smMP - lastMP) < 3 && Math.abs(smPIP - lastPIP) < 3) {
+                            steadyTime += 16;
+                        } else {
+                            steadyTime = 0;
+                        }
+                        const progress = (steadyTime / 3000) * 100;
+                        document.getElementById('progress-bar').style.width = progress + '%';
+
+                        if (steadyTime >= 3000) {
+                            isSteady = true;
+                            document.getElementById('result-display').innerHTML = `MP: ${smMP.toFixed(0)}°<br>PIP: ${smPIP.toFixed(0)}°`;
+                            document.getElementById('result-display').style.display = 'block';
+                        }
                     }
 
-                    if (steadyTime >= 3000 && !isSteady) {
-                        confirmedMP = smMP.toFixed(0);
-                        confirmedPIP = smPIP.toFixed(0);
-                        isSteady = true;
-                    }
-
-                    document.getElementById('angle-display').innerHTML = `MP: ${smMP.toFixed(0)}° | PIP: ${smPIP.toFixed(0)}°<br>` +
-                        `<span style="color:${isSteady ? '#00ff00' : '#888'}">確定値: MP ${confirmedMP}° | PIP ${confirmedPIP}°</span>`;
-
+                    document.getElementById('angle-display').innerText = `リアルタイム -> MP: ${smMP.toFixed(0)}° | PIP: ${smPIP.toFixed(0)}°`;
                     lastMP = smMP; lastPIP = smPIP;
                     drawConnectors(canvasCtx, [l[5], l[6], l[7], l[8]], [[0,1],[1,2],[2,3]], {color:'#00ff00', lineWidth:8});
                 }

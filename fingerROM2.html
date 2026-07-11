@@ -2,18 +2,25 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>ROM測定：左右切替カメラ</title>
+    <title>示指 ROM測定モード</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background: black; }
         #container { position: relative; width: 100vw; height: 100vh; }
         video, canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; }
+        
+        /* モード表示（右上） */
+        #mode-display {
+            position: absolute; top: 20px; right: 20px;
+            background: rgba(0, 0, 0, 0.6); color: white;
+            padding: 15px 25px; border-radius: 10px;
+            font-size: 24px; font-weight: bold; z-index: 20;
+        }
         
         #controls {
             position: absolute; bottom: 20px; width: 100%; text-align: center;
             z-index: 10;
         }
         button { padding: 15px 30px; font-size: 18px; margin: 0 10px; cursor: pointer; }
-        #status { color: white; position: absolute; top: 20px; left: 20px; font-size: 24px; z-index: 10; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
@@ -21,7 +28,7 @@
 </head>
 <body>
 
-<div id="status">選択中: 右手</div>
+<div id="mode-display">右手測定モード</div>
 <div id="container">
     <video id="input_video" autoplay playsinline></video>
     <canvas id="output_canvas"></canvas>
@@ -36,15 +43,17 @@
     let targetHand = 'Right';
     function setHand(hand) {
         targetHand = hand;
-        document.getElementById('status').innerText = "選択中: " + (hand === 'Right' ? "右手" : "左手");
+        document.getElementById('mode-display').innerText = (hand === 'Right' ? "右手" : "左手") + "測定モード";
     }
 
     const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
 
+    // 示指の関節インデックス（MediaPipeの定義）
+    const INDEX_FINGER_LANDMARKS = [5, 6, 7, 8]; 
+
     function onResults(results) {
-        // キャンバスサイズを画面に合わせる
         canvasElement.width = videoElement.videoWidth;
         canvasElement.height = videoElement.videoHeight;
 
@@ -55,12 +64,15 @@
         if (results.multiHandLandmarks && results.multiHandedness) {
             for (let i = 0; i < results.multiHandLandmarks.length; i++) {
                 const landmarks = results.multiHandLandmarks[i];
-                const handedness = results.multiHandedness[i].label; // Left/Right
+                const handedness = results.multiHandedness[i].label;
 
-                // 選択した手のみ骨格を描画
+                // 選択した手のみ、示指の関節のみを抽出して描画
                 if (handedness === targetHand) {
-                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
-                    drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2});
+                    const indexLandmarks = INDEX_FINGER_LANDMARKS.map(idx => landmarks[idx]);
+                    
+                    // 示指を描画（緑のライン）
+                    drawConnectors(canvasCtx, indexLandmarks, [[0, 1], [1, 2], [2, 3]], {color: '#00FF00', lineWidth: 8});
+                    drawLandmarks(canvasCtx, indexLandmarks, {color: '#FF0000', lineWidth: 2, radius: 5});
                 }
             }
         }
@@ -68,7 +80,7 @@
     }
 
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5 });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7 });
     hands.onResults(onResults);
 
     const camera = new Camera(videoElement, {

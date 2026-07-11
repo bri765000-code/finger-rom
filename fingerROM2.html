@@ -2,19 +2,16 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>示指 ROM 測定システム (UI適正化版)</title>
+    <title>示指 ROM 測定システム (高安定化版)</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; }
         #container { position: relative; width: 100vw; height: 100vh; }
-        
-        /* 映像と描画キャンバスのみ反転 */
         video, canvas { 
             position: absolute; width: 100%; height: 100%; object-fit: cover; 
             transform: scaleX(-1); 
         }
         video { filter: brightness(0.6); }
         
-        /* UIは反転させない */
         #angle-display {
             position: absolute; top: 20px; width: 100%; text-align: center;
             color: #fff; font-size: 24px; z-index: 30; pointer-events: none;
@@ -36,7 +33,6 @@
 </head>
 <body>
 
-<!-- UI部分は反転しない -->
 <div id="angle-display">MP: 0° | PIP: 0°</div>
 <div id="progress-container"><div id="progress-bar"></div></div>
 <div id="result-display"></div>
@@ -85,6 +81,7 @@
         document.getElementById('mode-display').innerText = (hand === 'Right' ? "右手" : "左手") + "測定モード";
     }
 
+    // 角度計算：絶対値をとり、0度（伸展）からプラス方向に増える計算
     function getDeg(a, b, c) {
         let angle = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
         angle = Math.abs(angle * 180 / Math.PI);
@@ -96,25 +93,25 @@
     const canvasCtx = canvasElement.getContext('2d');
 
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5 });
+    // 信頼度を0.3に緩和し、検出を維持しやすくする
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.3, minTrackingConfidence: 0.5 });
     
     hands.onResults((results) => {
         canvasElement.width = videoElement.videoWidth;
         canvasElement.height = videoElement.videoHeight;
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         
-        if (results.multiHandLandmarks) {
+        if (results.multiHandLandmarks && results.multiHandedness) {
             for (let i = 0; i < results.multiHandLandmarks.length; i++) {
                 const l = results.multiHandLandmarks[i];
-                // 反転したため、AIが認識したLeft/Rightはそのまま使う
                 const handedness = results.multiHandedness[i].label; 
                 
-                if (handedness === targetHand && l[0] && l[5] && l[6] && l[7]) {
+                if (handedness === targetHand) {
                     const smMP = filterMP.update(getDeg(l[0], l[5], l[6]));
                     const smPIP = filterPIP.update(getDeg(l[5], l[6], l[7]));
 
                     if (!isSteady) {
-                        if (Math.abs(smMP - lastMP) < 3 && Math.abs(smPIP - lastPIP) < 3) {
+                        if (Math.abs(smMP - lastMP) < 5 && Math.abs(smPIP - lastPIP) < 5) {
                             steadyTime += 20;
                         } else {
                             steadyTime = 0;
@@ -128,6 +125,8 @@
                     }
                     document.getElementById('angle-display').innerText = `MP: ${smMP.toFixed(0)}° | PIP: ${smPIP.toFixed(0)}°`;
                     lastMP = smMP; lastPIP = smPIP;
+                    
+                    // 描画：ランドマークが存在する場合のみ描画
                     drawConnectors(canvasCtx, [l[0], l[5], l[6]], [[0,1],[1,2]], {color:'#00ff00', lineWidth:6});
                     drawConnectors(canvasCtx, [l[5], l[6], l[7]], [[0,1],[1,2]], {color:'#00ff00', lineWidth:6});
                     drawLandmarks(canvasCtx, [l[0], l[5], l[6], l[7]], {color:'#ff0000', lineWidth:2});
@@ -136,7 +135,11 @@
         }
     });
 
-    new Camera(videoElement, {onFrame: async () => { await hands.send({image: videoElement}); }, width: 1280, height: 720}).start();
+    // 負荷軽減のためCameraインスタンスの設定を最適化
+    new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 640, height: 480 // 解像度を下げて処理を軽くする
+    }).start();
 </script>
 </body>
 </html>

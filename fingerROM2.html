@@ -2,19 +2,19 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>示指 ROM 測定システム (反転修正版)</title>
+    <title>示指 ROM 測定システム (UI適正化版)</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background: #1a1a1a; }
-        #container { 
-            position: relative; width: 100vw; height: 100vh; 
-            transform: scaleX(-1); /* 映像全体を反転（鏡像化） */
+        #container { position: relative; width: 100vw; height: 100vh; }
+        
+        /* 映像と描画キャンバスのみ反転 */
+        video, canvas { 
+            position: absolute; width: 100%; height: 100%; object-fit: cover; 
+            transform: scaleX(-1); 
         }
-        video { position: absolute; width: 100%; height: 100%; object-fit: cover; filter: brightness(0.6); }
-        canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; }
+        video { filter: brightness(0.6); }
         
-        /* 反転させた映像の上で文字だけ正位置に戻す */
-        .ui-element { transform: scaleX(-1); }
-        
+        /* UIは反転させない */
         #angle-display {
             position: absolute; top: 20px; width: 100%; text-align: center;
             color: #fff; font-size: 24px; z-index: 30; pointer-events: none;
@@ -25,7 +25,7 @@
         }
         #progress-bar { width: 0%; height: 100%; background: #00ff00; transition: width 0.1s; }
         #result-display {
-            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scaleX(-1);
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             color: #00ff00; font-size: 70px; font-weight: bold; text-align: center;
             text-shadow: 0 0 20px rgba(0,255,0,0.5); z-index: 40; display: none;
         }
@@ -36,17 +36,18 @@
 </head>
 <body>
 
-<div id="angle-display" class="ui-element">MP: 0° | PIP: 0°</div>
-<div id="progress-container" class="ui-element"><div id="progress-bar"></div></div>
+<!-- UI部分は反転しない -->
+<div id="angle-display">MP: 0° | PIP: 0°</div>
+<div id="progress-container"><div id="progress-bar"></div></div>
 <div id="result-display"></div>
-<div id="mode-display" class="ui-element">右手測定モード</div>
+<div id="mode-display">右手測定モード</div>
 
 <div id="container">
     <video id="input_video" autoplay playsinline></video>
     <canvas id="output_canvas"></canvas>
 </div>
 
-<div id="controls" class="ui-element">
+<div id="controls">
     <button onclick="resetMeasurement()">リセット</button>
     <button onclick="setHand('Right')">右手</button>
     <button onclick="setHand('Left')">左手</button>
@@ -84,12 +85,10 @@
         document.getElementById('mode-display').innerText = (hand === 'Right' ? "右手" : "左手") + "測定モード";
     }
 
-    // 角度計算：より正確に鋭角を取得する
     function getDeg(a, b, c) {
         let angle = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
         angle = Math.abs(angle * 180 / Math.PI);
-        if (angle > 180) angle = 360 - angle;
-        return angle;
+        return angle > 180 ? 360 - angle : angle;
     }
 
     const videoElement = document.getElementById('input_video');
@@ -107,7 +106,7 @@
         if (results.multiHandLandmarks) {
             for (let i = 0; i < results.multiHandLandmarks.length; i++) {
                 const l = results.multiHandLandmarks[i];
-                // 反転させたため、ラベル判定はそのまま使用可能
+                // 反転したため、AIが認識したLeft/Rightはそのまま使う
                 const handedness = results.multiHandedness[i].label; 
                 
                 if (handedness === targetHand && l[0] && l[5] && l[6] && l[7]) {

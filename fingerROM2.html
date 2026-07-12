@@ -47,7 +47,8 @@
 <video id="input_video" autoplay playsinline></video>
 
 <script>
-    const peer = new Peer();
+    const shortId = Math.floor(1000 + Math.random() * 9000).toString();
+    const peer = new Peer(shortId);
     let conn, remoteData = { mp: 0, pip: 0 };
     let steadyTime = 0, isSteady = false, lastIntegrated = { mp: 0, pip: 0 };
 
@@ -61,50 +62,44 @@
     }
 
     // --- 修正版: QRスキャンロジック ---
-    async function startScanner() {
+   async function startScanner() {
     document.getElementById('overlay').style.display = 'block';
     const v = document.getElementById('scanner-video');
     v.style.display = 'block';
-    document.getElementById('qr-container').innerHTML = '<p>読み取り中...</p>';
     
-    // カメラの解像度を調整（読み取り効率化）
+    // カメラ設定を読み取り優先にする
     const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: { exact: "environment" }, width: { ideal: 640 } } 
+        video: { facingMode: { exact: "environment" } } 
     });
     v.srcObject = stream;
-    v.play();
-
-    // 解析用Canvasを裏で作る
+    
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     const scan = () => {
-        if (v.style.display === 'none') return; // 閉じたら終了
+        if (v.style.display !== 'block') return;
         
-        // 映像をCanvasに描画
         canvas.width = v.videoWidth;
         canvas.height = v.videoHeight;
         ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
         
-        // 画像データ取得
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        
-        // QR解析
-        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "attemptBoth", // 反転しても読み込めるようにする
+        });
         
         if (code) {
-            // 成功時
+            // ここで接続を試みる
             conn = peer.connect(code.data);
             setupConn();
             stream.getTracks().forEach(t => t.stop());
             document.getElementById('overlay').style.display = 'none';
         } else {
-            // 失敗時は次フレームへ
             requestAnimationFrame(scan);
         }
     };
     requestAnimationFrame(scan);
-    }
+}
 
     // --- 計測・統合ロジック ---
     const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });

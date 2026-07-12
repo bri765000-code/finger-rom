@@ -60,27 +60,50 @@
         QRCode.toCanvas(document.getElementById('qr-canvas'), peer.id);
     }
 
+    // --- 修正版: QRスキャンロジック ---
     async function startScanner() {
-        document.getElementById('overlay').style.display = 'block';
-        const v = document.getElementById('scanner-video');
-        v.style.display = 'block';
-        document.getElementById('qr-container').innerHTML = '';
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
-        v.srcObject = stream;
-        const scan = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = v.videoWidth; canvas.height = v.videoHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(v, 0, 0);
-            const code = jsQR(ctx.getImageData(0,0,canvas.width,canvas.height).data, canvas.width, canvas.height);
-            if(code) {
-                conn = peer.connect(code.data);
-                setupConn();
-                stream.getTracks().forEach(t => t.stop());
-                document.getElementById('overlay').style.display = 'none';
-            } else if(v.style.display === 'block') { requestAnimationFrame(scan); }
-        };
-        requestAnimationFrame(scan);
+    document.getElementById('overlay').style.display = 'block';
+    const v = document.getElementById('scanner-video');
+    v.style.display = 'block';
+    document.getElementById('qr-container').innerHTML = '<p>読み取り中...</p>';
+    
+    // カメラの解像度を調整（読み取り効率化）
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: { exact: "environment" }, width: { ideal: 640 } } 
+    });
+    v.srcObject = stream;
+    v.play();
+
+    // 解析用Canvasを裏で作る
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    const scan = () => {
+        if (v.style.display === 'none') return; // 閉じたら終了
+        
+        // 映像をCanvasに描画
+        canvas.width = v.videoWidth;
+        canvas.height = v.videoHeight;
+        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+        
+        // 画像データ取得
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        
+        // QR解析
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        
+        if (code) {
+            // 成功時
+            conn = peer.connect(code.data);
+            setupConn();
+            stream.getTracks().forEach(t => t.stop());
+            document.getElementById('overlay').style.display = 'none';
+        } else {
+            // 失敗時は次フレームへ
+            requestAnimationFrame(scan);
+        }
+    };
+    requestAnimationFrame(scan);
     }
 
     // --- 計測・統合ロジック ---

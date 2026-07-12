@@ -30,64 +30,39 @@
     <div id="progress-container"><div id="progress-bar"></div></div>
     <div id="result-display"></div>
     <div id="controls">
-        <button onclick="setHand('Right')">右手</button>
-        <button onclick="setHand('Left')">左手</button>
-        <button onclick="showQR()">QR表示</button>
-        <button onclick="startScanner()">読み取り</button>
-        <button onclick="resetMeasurement()">リセット</button>
-    </div>
+    <button onclick="setHand('Right')">右手</button>
+    <button onclick="setHand('Left')">左手</button>
+    <button onclick="showID()">自分のIDを表示</button>
+    <button onclick="inputAndConnect()">IDを入力して接続</button>
+    <button onclick="resetMeasurement()">リセット</button>
+</div>
 </div>
 
-<div id="overlay">
-    <div id="qr-container"></div>
-    <video id="scanner-video" style="width:100%; display:none;" autoplay playsinline></video>
-    <br><button onclick="document.getElementById('overlay').style.display='none'">閉じる</button>
+<div id="overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:100; text-align:center; padding-top:20vh;">
+    <div id="id-display" style="font-size: 80px; font-weight: bold; color: #0ff;">----</div>
+    <p>このIDを相手に入力してもらう</p>
+    <button onclick="document.getElementById('overlay').style.display='none'">閉じる</button>
 </div>
 
 <video id="input_video" autoplay playsinline></video>
 
 <script>
+    // IDをランダムな4桁に固定
     const shortId = Math.floor(1000 + Math.random() * 9000).toString();
     const peer = new Peer(shortId);
-    let conn, remoteData = { mp: 0, pip: 0 };
-    let steadyTime = 0, isSteady = false, lastIntegrated = { mp: 0, pip: 0 };
 
-    // --- QR関連 ---
-    function showQR() {
-        const container = document.getElementById('qr-container');
+    function showID() {
         document.getElementById('overlay').style.display = 'block';
-        document.getElementById('scanner-video').style.display = 'none';
-        container.innerHTML = '<canvas id="qr-canvas" style="background:#fff; margin-top:50px;"></canvas>';
-        QRCode.toCanvas(document.getElementById('qr-canvas'), peer.id);
+        document.getElementById('id-display').innerText = shortId;
     }
 
-    // --- 修正版: QRスキャンロジック ---
-   async function startScanner() {
-    document.getElementById('overlay').style.display = 'block';
-    const v = document.getElementById('scanner-video');
-    v.style.display = 'block';
-    
-    // カメラ設定を読み取り優先にする
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: { exact: "environment" } } 
-    });
-    v.srcObject = stream;
-    
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-    const scan = () => {
-        if (v.style.display !== 'block') return;
-        
-        canvas.width = v.videoWidth;
-        canvas.height = v.videoHeight;
-        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-        
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: "attemptBoth", // 反転しても読み込めるようにする
-        });
-        
+    function inputAndConnect() {
+        const targetId = prompt("相手のID（4桁）を入力してください：");
+        if (targetId) {
+            conn = peer.connect(targetId);
+            setupConn();
+        }
+    }
         if (code) {
             // ここで接続を試みる
             conn = peer.connect(code.data);
@@ -97,9 +72,9 @@
         } else {
             requestAnimationFrame(scan);
         }
-    };
+    
     requestAnimationFrame(scan);
-}
+
 
     // --- 計測・統合ロジック ---
     const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
@@ -147,6 +122,7 @@
         onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
         width: 1280, height: 720
     }).start();
+
 </script>
 </body>
 </html>

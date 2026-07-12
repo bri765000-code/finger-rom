@@ -8,59 +8,55 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <style>
         body { margin: 0; background: #000; color: #fff; font-family: sans-serif; }
-        #container { position: relative; width: 100vw; height: 100vh; overflow: hidden;}
-        #input_video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1;}
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; /* カメラより手前 */ pointer-events: none;}
-        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 100; display: none; pointer-events: auto; text-align: center; }
+        #container { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+        #input_video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
         #status-box { padding: 10px; margin: 10px; background: #333; pointer-events: auto; border-radius: 8px; display: inline-block; }
         #angle-display { font-size: 24px; text-align: center; margin-top: 10px; }
         #progress-container { margin: 10px auto; width: 80%; height: 12px; background: #333; border-radius: 6px; overflow: hidden; }
         #progress-bar { width: 0%; height: 100%; background: #00ff00; transition: width 0.1s; }
         #result-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #0f0; font-size: 60px; font-weight: bold; display: none; text-shadow: 0 0 10px #000; }
-        #controls {position: absolute; bottom: 30px; width: 100%; text-align: center; pointer-events: auto;}
-        button { padding: 12px 20px; margin: 5px; cursor: pointer; border-radius: 8px; border: none; background: #444; color: white; }
-        #input_video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        #controls { position: absolute; bottom: 30px; width: 100%; text-align: center; pointer-events: auto; }
+        button { padding: 12px 20px; margin: 5px; cursor: pointer; border-radius: 8px; border: none; background: #444; color: white; pointer-events: auto; }
     </style>
 </head>
 <body>
 <div id="container">
     <video id="input_video" autoplay playsinline></video>
-
     <div id="ui-layer">
         <div id="status-box">Status: <span id="status-text">未接続</span></div>
         <div id="angle-display">MP: 0° | PIP: 0°</div>
         <div id="progress-container"><div id="progress-bar"></div></div>
         <div id="result-display"></div>
         <div id="controls">
-        <button onclick="setHand('Right')">右手</button>
-        <button onclick="setHand('Left')">左手</button>
-        <button onclick="showID()">自分のIDを表示</button>
-        <button onclick="inputAndConnect()">IDを入力して接続</button>
-        <button onclick="resetMeasurement()">リセット</button>
+            <button onclick="setHand('Right')">右手</button>
+            <button onclick="setHand('Left')">左手</button>
+            <button onclick="showID()">自分のIDを表示</button>
+            <button onclick="inputAndConnect()">IDを入力して接続</button>
+            <button onclick="resetMeasurement()">リセット</button>
         </div>
     </div>
 </div>
 
-
 <script>
     const shortId = Math.floor(1000 + Math.random() * 9000).toString();
     const peer = new Peer(shortId);
-    let conn;
+    let conn, remoteData = { mp: 0, pip: 0 };
+    let steadyTime = 0, isSteady = false, lastIntegrated = { mp: 0, pip: 0 };
 
-    // --- カメラの安定起動 ---
+    const videoElement = document.getElementById('input_video');
     const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
     hands.setOptions({ maxNumHands: 1, minDetectionConfidence: 0.7 });
 
-    const videoElement = document.getElementById('input_video');
+    // カメラの初期化は一箇所に統合[cite: 2]
     const camera = new Camera(videoElement, {
         onFrame: async () => { await hands.send({image: videoElement}); },
         width: 1280, height: 720
     });
-    
-    // アプリ起動時にカメラを永続的に動かす
-    camera.start().catch(e => console.error("カメラ起動エラー", e));
+    camera.start();
 
-    // --- 接続ロジック（カメラを止めない） ---
+    function showID() { alert("あなたのID: " + shortId); }
+
     function inputAndConnect() {
         const targetId = prompt("相手のIDを入力：");
         if (targetId) {
@@ -76,14 +72,12 @@
 
     function setupConn() {
         document.getElementById('status-text').innerText = "接続済み";
-        conn.on('data', d => {
-            // ここで remoteData を更新しても、カメラには影響しないはずです
-        });
-        // 接続してもカメラの状態を一切変更しない
+        document.getElementById('status-text').style.color = "#0f0";
+        conn.on('data', d => { remoteData = d; });
     }
 
     hands.onResults(res => {
-       if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+        if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
             const l = res.multiHandLandmarks[0];
             const myMP = getAngle(l[0], l[5], l[6]), myPIP = getAngle(l[5], l[6], l[7]);
             if (conn && conn.open) conn.send({ mp: myMP, pip: myPIP });
@@ -111,20 +105,8 @@
         return Math.max(0, 180 - Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI);
     }
 
-    function setupConn() {
-        document.getElementById('status-text').innerText = "接続済み";
-        document.getElementById('status-text').style.color = "#0f0";
-        conn.on('data', d => remoteData = d);
-    }
-
     function resetMeasurement() { steadyTime = 0; isSteady = false; document.getElementById('result-display').style.display = 'none'; }
     function setHand(h) { alert(h + "モードに設定しました"); resetMeasurement(); }
-
-    new Camera(document.getElementById('input_video'), {
-        onFrame: async () => { await hands.send({image: document.getElementById('input_video')}); },
-        width: 1280, height: 720
-    }).start();
-    
 </script>
 </body>
 </html>

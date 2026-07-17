@@ -98,7 +98,7 @@
                 if (Math.abs(smMP - lastMP) < 2 && Math.abs(smPIP - lastPIP) < 2) steadyTime += 16;
                 else steadyTime = 0;
                 document.getElementById('progress-bar').style.width = Math.min(steadyTime / 3000 * 100, 100) + '%';
-                if (steadyTime >= 2000) {
+                if (steadyTime >= 3000) {
                     isSteady = true;
                     document.getElementById('result-display').innerHTML = `MP: ${smMP.toFixed(0)}°<br>PIP: ${smPIP.toFixed(0)}°`;
                     document.getElementById('result-display').style.display = 'block';

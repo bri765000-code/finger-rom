@@ -103,6 +103,19 @@
         canvas.width = video.videoWidth; canvas.height = video.videoHeight;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            // 左右判定情報を取得 (MediaPipeの仕様では、反転映像の兼ね合いで Label が逆転することがあります)
+        const handedness = results.multiHandedness[0].label; // 'Left' または 'Right'
+        
+        // ターゲットの手と一致するか確認（反転している場合は Left/Right を入れ替えて判定）
+        // カメラが反転(transform: scaleX(-1))しているため、判定も反転させます
+        const detectedHand = (handedness === 'Left') ? 'Right' : 'Left';
+
+        if (detectedHand !== targetHand) {
+            // モードと違う手なら描画せず終了
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            return;
+        }
+        
             const l = results.multiHandLandmarks[0];
             const smMP = filterMP.update(getJointAngle(l[0], l[5], l[6])), smPIP = filterPIP.update(getJointAngle(l[5], l[6], l[7]));
 

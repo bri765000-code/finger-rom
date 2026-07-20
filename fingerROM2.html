@@ -31,7 +31,20 @@
     <div id="mode-indicator">現在の設定: 右手測定</div>
     <div id="progress-container"><div id="progress-bar"></div></div>
     <div id="result-display"></div>
-    
+    <div id="connection-panel" style="display:none; margin-top: 50px; text-align: center; pointer-events: auto;">
+    <div id="role-selector">
+        <button class="toggle-btn" onclick="setRole('host')">ホスト (メイン機)</button>
+        <button class="toggle-btn" onclick="setRole('guest')">ゲスト (サブ機)</button>
+    </div>
+    <div id="host-ui" style="display:none; margin-top: 20px;">
+        <p>ホストID: <span id="access-code" style="font-size:32px; color:#ffcc00;">生成中...</span></p>
+    </div>
+    <div id="guest-ui" style="display:none; margin-top: 20px;">
+        <input type="number" id="code-input" placeholder="4桁コード" style="padding:10px; width:120px;">
+        <button class="toggle-btn" onclick="connectToHost()">接続</button>
+    </div>
+    <div id="connection-status" style="margin-top:10px; color:#aaa;">未接続</div>
+    </div>
     <div id="controls">
         <div class="control-group" id="mode-group">
             <button class="toggle-btn active" onclick="updateMode('single', this)">単眼</button>
@@ -49,6 +62,17 @@
 <div id="container">
     <video id="input_video" autoplay playsinline></video>
     <canvas id="output_canvas"></canvas>
+</div>
+
+<div id="connection-panel" style="display:none; position:absolute; top:200px; width:100%; text-align:center;">
+    <div id="host-ui" style="display:none;">
+        <p>接続コード: <span id="access-code" style="font-size:40px; color:#ffcc00;">0000</span></p>
+    </div>
+    <div id="guest-ui" style="display:none;">
+        <input type="number" id="code-input" placeholder="4桁のコードを入力">
+        <button onclick="connectToHost()">接続</button>
+    </div>
+    <div id="status-display">未接続</div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
@@ -73,13 +97,38 @@
         document.getElementById('progress-bar').style.width = '0%';
     }
 
-    function updateMode(mode, btnElement) {
-        currentMode = mode;
-        document.getElementById('mode-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
-        btnElement.classList.add('active');
-        resetMeasurement();
-        console.log("モード切替:", mode);
+   let currentRole = null;
+
+function updateMode(mode, btnElement) {
+    currentMode = mode;
+    document.getElementById('mode-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+    btnElement.classList.add('active');
+
+    // 2台連携モードなら接続パネルを表示
+    const panel = document.getElementById('connection-panel');
+    panel.style.display = (mode === 'dual') ? 'block' : 'none';
+    resetMeasurement();
+}
+
+function setRole(role) {
+    currentRole = role;
+    document.getElementById('role-selector').style.display = 'none';
+    
+    if (role === 'host') {
+        document.getElementById('host-ui').style.display = 'block';
+        const randomCode = Math.floor(1000 + Math.random() * 9000);
+        document.getElementById('access-code').innerText = randomCode;
+        document.getElementById('connection-status').innerText = "接続待機中...";
+    } else {
+        document.getElementById('guest-ui').style.display = 'block';
     }
+}
+
+function connectToHost() {
+    const code = document.getElementById('code-input').value;
+    document.getElementById('connection-status').innerText = code + " に接続中...";
+    // 後ほどPeerJSの接続処理をここに追加
+}
 
     function updateHand(hand, btnElement) {
         targetHand = hand;
@@ -115,7 +164,7 @@
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             return;
         }
-        
+
             const l = results.multiHandLandmarks[0];
             const smMP = filterMP.update(getJointAngle(l[0], l[5], l[6])), smPIP = filterPIP.update(getJointAngle(l[5], l[6], l[7]));
 

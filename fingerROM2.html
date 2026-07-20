@@ -16,8 +16,11 @@
         
         #result-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #00ff00; font-size: 80px; font-weight: bold; text-shadow: 0 0 20px #000; display: none; }
         
-        #controls { position: absolute;   bottom: 80px; /* 下部からの距離を確保 */  width: 100%;   text-align: center;  pointer-events: auto;}
-        button { padding: 15px 25px; /* タップしやすいサイズ */  margin: 5px;  min-width: 100px; /* 指で押しやすい幅 */}
+        /* UIコントロール用スタイル */
+        #controls { position: absolute; bottom: 40px; width: 100%; text-align: center; pointer-events: auto; }
+        .control-group { margin: 10px auto; display: inline-block; background: #222; padding: 5px; border-radius: 12px; }
+        .toggle-btn { padding: 12px 20px; border: none; border-radius: 8px; background: #444; color: white; cursor: pointer; transition: background 0.3s; }
+        .toggle-btn.active { background: #00ff00; color: #000; font-weight: bold; }
         #mode-indicator { position: absolute; top: 120px; width: 100%; text-align: center; color: #ffcc00; font-weight: bold; }
     </style>
 </head>
@@ -28,6 +31,19 @@
     <div id="mode-indicator">現在の設定: 右手測定</div>
     <div id="progress-container"><div id="progress-bar"></div></div>
     <div id="result-display"></div>
+    
+    <div id="controls">
+        <div class="control-group" id="mode-group">
+            <button class="toggle-btn active" onclick="updateMode('single', this)">単眼</button>
+            <button class="toggle-btn" onclick="updateMode('dual', this)">2台連携</button>
+        </div>
+        <br>
+        <div class="control-group" id="hand-group">
+            <button class="toggle-btn active" onclick="updateHand('Right', this)">右手</button>
+            <button class="toggle-btn" onclick="updateHand('Left', this)">左手</button>
+            <button class="toggle-btn" onclick="resetMeasurement()" style="background:#666">リセット</button>
+        </div>
+    </div>
 </div>
 
 <div id="container">
@@ -35,39 +51,10 @@
     <canvas id="output_canvas"></canvas>
 </div>
 
-<div id="controls">
-    <button onclick="switchMode('single')">単眼</button>
-    <button onclick="switchMode('dual')">2台連携</button>
-    <button onclick="resetMeasurement()">リセット</button>
-</div>
-<div id="hand-controls" style="margin-top: 10px;">
-    <button onclick="setHand('Right')">右手</button>
-    <button onclick="setHand('Left')">左手</button>
-</div>
-
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 
 <script>
-    // モード管理変数
-    const MODE = { SINGLE: 'single', DUAL: 'dual' };
-    let currentMode = MODE.SINGLE;
-
-    // モード切り替え関数
-    function switchMode(newMode) {
-    currentMode = newMode;
-    // UIのフィードバック
-    document.getElementById('mode-indicator').innerText = 
-        "現在のモード: " + (newMode === 'single' ? "単眼測定" : "2台連携測定");
-    
-    resetMeasurement();
-    
-    if (newMode === 'dual') {
-        // ここに2台接続用の初期化処理（PeerJSの準備など）を入れる予定
-        console.log("2台連携モードへ切り替え中...");
-        }
-    }
-
     class KalmanFilter {
         constructor(q, r) { this.q = q; this.r = r; this.x = 0; this.p = 1; }
         update(m) { this.p += this.q; let k = this.p / (this.p + this.r); this.x += k * (m - this.x); this.p = (1 - k) * this.p; return this.x; }
@@ -76,72 +63,63 @@
     const filterMP = new KalmanFilter(0.05, 1.0);
     const filterPIP = new KalmanFilter(0.05, 1.0);
     
-    let isSteady = false;
-    let steadyStartTime = 0;
-    let lastMP = 0, lastPIP = 0;
-    let targetHand = 'Right';
-    const GOAL_TIME = 2000; // 2秒で確定
+    let isSteady = false, steadyStartTime = 0, lastMP = 0, lastPIP = 0;
+    let targetHand = 'Right', currentMode = 'single';
+    const GOAL_TIME = 2000;
 
     function resetMeasurement() {
-        isSteady = false;
-        steadyStartTime = 0;
+        isSteady = false; steadyStartTime = 0;
         document.getElementById('result-display').style.display = 'none';
         document.getElementById('progress-bar').style.width = '0%';
     }
 
-    function setHand(hand) {
+    function updateMode(mode, btnElement) {
+        currentMode = mode;
+        document.getElementById('mode-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+        btnElement.classList.add('active');
+        resetMeasurement();
+        console.log("モード切替:", mode);
+    }
+
+    function updateHand(hand, btnElement) {
         targetHand = hand;
+        document.getElementById('hand-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+        btnElement.classList.add('active');
         document.getElementById('mode-indicator').innerText = "現在の設定: " + (hand === 'Right' ? "右手" : "左手") + "測定";
         resetMeasurement();
     }
 
     function getJointAngle(p1, p2, p3) {
-        const v1 = { x: p1.x - p2.x, y: p1.y - p2.y };
-        const v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
-        const dotProduct = v1.x * v2.x + v1.y * v2.y;
-        const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
-        const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
-        let angleDeg = Math.acos(Math.max(-1, Math.min(1, dotProduct / (mag1 * mag2)))) * 180 / Math.PI;
-        return Math.max(0, 180 - angleDeg);
+        const v1 = { x: p1.x - p2.x, y: p1.y - p2.y }, v2 = { x: p3.x - p2.x, y: p3.y - p2.y };
+        const dot = v1.x * v2.x + v1.y * v2.y, mag1 = Math.sqrt(v1.x**2 + v1.y**2), mag2 = Math.sqrt(v2.x**2 + v2.y**2);
+        return Math.max(0, 180 - Math.acos(Math.max(-1, Math.min(1, dot / (mag1 * mag2)))) * 180 / Math.PI);
     }
 
-    const video = document.getElementById('input_video');
-    const canvas = document.getElementById('output_canvas');
-    const ctx = canvas.getContext('2d');
-
+    const video = document.getElementById('input_video'), canvas = document.getElementById('output_canvas'), ctx = canvas.getContext('2d');
     const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
     hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
 
     hands.onResults((results) => {
         canvas.width = video.videoWidth; canvas.height = video.videoHeight;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
             const l = results.multiHandLandmarks[0];
-            const smMP = filterMP.update(getJointAngle(l[0], l[5], l[6]));
-            const smPIP = filterPIP.update(getJointAngle(l[5], l[6], l[7]));
+            const smMP = filterMP.update(getJointAngle(l[0], l[5], l[6])), smPIP = filterPIP.update(getJointAngle(l[5], l[6], l[7]));
 
             if (!isSteady) {
                 if (Math.abs(smMP - lastMP) < 3 && Math.abs(smPIP - lastPIP) < 3) {
                     if (steadyStartTime === 0) steadyStartTime = Date.now();
                     const elapsed = Date.now() - steadyStartTime;
-                    
                     document.getElementById('progress-bar').style.width = Math.min((elapsed / GOAL_TIME) * 100, 100) + '%';
-                    
                     if (elapsed >= GOAL_TIME) {
                         isSteady = true;
                         document.getElementById('result-display').innerHTML = `MP: ${smMP.toFixed(0)}°<br>PIP: ${smPIP.toFixed(0)}°`;
                         document.getElementById('result-display').style.display = 'block';
                     }
-                } else {
-                    steadyStartTime = 0;
-                    document.getElementById('progress-bar').style.width = '0%';
-                }
+                } else { steadyStartTime = 0; document.getElementById('progress-bar').style.width = '0%'; }
             }
-            
             document.getElementById('angle-display').innerText = `MP: ${smMP.toFixed(0)}° | PIP: ${smPIP.toFixed(0)}°`;
             lastMP = smMP; lastPIP = smPIP;
-
             ctx.strokeStyle = '#00ff00'; ctx.lineWidth = 10;
             ctx.beginPath();
             ctx.moveTo(l[0].x * canvas.width, l[0].y * canvas.height);
